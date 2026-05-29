@@ -23,3 +23,6 @@ build/
 
 # Logs
 *.log
+
+# Local browser verification artifacts
+.playwright-cli/
