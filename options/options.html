@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GermanyVocab Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <h1>GermanyVocab Settings</h1>
+
+    <!-- ── Personalize ── -->
+    <div class="card">
+      <h2>🎨 Personalize Your App</h2>
+      <p>Give your copy a unique name and icon. No coding needed — just type and pick an image!</p>
+
+      <div class="form-group">
+        <label for="appName">App Name</label>
+        <input type="text" id="appName" placeholder="e.g. My Vocab App" maxlength="40">
+      </div>
+
+      <div class="form-group">
+        <label>App Icon</label>
+        <div class="icon-upload-row">
+          <img id="iconPreview" src="../assets/icons/icon128.png" alt="App icon preview" class="icon-preview">
+          <label for="iconUpload" class="btn secondary">📁 Choose Image</label>
+          <input type="file" id="iconUpload" accept="image/*" style="display:none">
+        </div>
+        <p class="help-text">Pick any square image (PNG or JPG). It will appear in the extension popup.</p>
+      </div>
+
+      <button id="savePersonalize" class="btn primary">Save Personalization</button>
+      <span id="personalizeStatus" class="status-msg"></span>
+    </div>
+
+    <div class="card">
+      <h2>Translation API Setup</h2>
+      <p>Google Cloud Translation is optional. If no key is saved, translations use the free Google Translate endpoint.</p>
+      
+      <div class="form-group">
+        <label for="googleApiKey">Google Translate API Key (Optional)</label>
+        <input type="password" id="googleApiKey" placeholder="Leave blank to use the free fallback">
+        <p class="help-text">Get your API key from <a href="https://console.cloud.google.com/apis/library/translate.googleapis.com" target="_blank">Google Cloud Console</a>.</p>
+      </div>
+
+      <h2>Story Generator Setup</h2>
+      <p>We use Gemini API to generate funny stories using your vocabulary.</p>
+      <div class="form-group">
+        <label for="geminiApiKey">Gemini API Key</label>
+        <input type="password" id="geminiApiKey" placeholder="Enter your Gemini API key here">
+        <p class="help-text">Get your API key from <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>.</p>
+      </div>
+
+      <button id="saveBtn" class="btn primary">Save Settings</button>
+      <span id="status" class="status-msg"></span>
+    </div>
+
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

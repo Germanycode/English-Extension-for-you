@@ -1,0 +1,80 @@
+{
+  "manifest_version": 3,
+  "name": "GermanyVocab",
+  "version": "1.1",
+  "description": "Learn German & English vocabulary on any website. Translate, save, and review words using Spaced Repetition (SRS).",
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "32": "assets/icons/icon32.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "notifications",
+    "activeTab",
+    "scripting",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://translation.googleapis.com/*",
+    "https://translate.googleapis.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.dictionaryapi.dev/*",
+    "https://api.datamuse.com/*",
+    "https://pixabay.com/*",
+    "https://cdnjs.cloudflare.com/*"
+  ],
+  "background": {
+    "service_worker": "background/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "css": [
+        "content/content.css"
+      ],
+      "js": [
+        "content/content.js"
+      ]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "assets/icons/icon16.png",
+      "32": "assets/icons/icon32.png",
+      "48": "assets/icons/icon48.png",
+      "128": "assets/icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "assets/musics/music.mp3",
+        "assets/musics/reading-music.mp3",
+        "assets/musics/Right_answer.mp3",
+        "assets/musics/Wrong answer.mp3",
+        "assets/musics/the_mountain-*.mp3",
+        "assets/musics/music-tracks.js",
+        "assets/icons/icon*.png",
+        "pdf-viewer/pdf-viewer.html",
+        "pdf-viewer/pdf-viewer.js",
+        "pdf-viewer/pdf-viewer.css",
+        "pdf-viewer/lib/pdf.min.js",
+        "pdf-viewer/lib/pdf.worker.min.js",
+        "pdf-viewer/lib/pdf_viewer.min.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

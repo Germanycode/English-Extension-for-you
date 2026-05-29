@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GermanyVocab</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 360px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #0f0f1a;
+      color: #e2e8f0;
+      overflow: hidden;
+    }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      background: #12121f;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 10px 0;
+      background: transparent;
+      border: none;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      letter-spacing: 0.4px;
+      border-bottom: 2px solid transparent;
+      transition: color 0.2s, border-color 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+    .tab-btn.active {
+      color: #a5b4fc;
+      border-bottom-color: #6366f1;
+    }
+    .tab-btn:hover:not(.active) {
+      color: #94a3b8;
+    }
+    .tab-panel {
+      display: none;
+    }
+    .tab-panel.active {
+      display: block;
+    }
+
+    /* ── Sentence Translator ── */
+    .translator-body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .translator-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #64748b;
+      font-weight: 600;
+    }
+    .lang-direction {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .lang-pill {
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+    }
+    .lang-pill.en {
+      background: rgba(99,102,241,0.2);
+      color: #a5b4fc;
+    }
+    .lang-pill.vi {
+      background: rgba(251,146,60,0.2);
+      color: #fdba74;
+    }
+    .arrow-icon { color: #475569; font-size: 14px; }
+    .translator-input {
+      width: 100%;
+      min-height: 90px;
+      padding: 12px;
+      background: #1a1a2e;
+      border: 1px solid rgba(99,102,241,0.25);
+      border-radius: 10px;
+      color: #e2e8f0;
+      font-size: 13px;
+      font-family: inherit;
+      line-height: 1.5;
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .translator-input::placeholder { color: #475569; }
+    .translator-input:focus { border-color: rgba(99,102,241,0.6); }
+    .translator-result {
+      background: #1a1a2e;
+      border: 1px solid rgba(251,146,60,0.2);
+      border-radius: 10px;
+      padding: 12px;
+      min-height: 70px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #94a3b8;
+      word-break: break-word;
+      transition: border-color 0.2s;
+    }
+    .translator-result.has-result {
+      color: #fdba74;
+      border-color: rgba(251,146,60,0.4);
+    }
+    .translator-result.error-state {
+      color: #f87171;
+      border-color: rgba(248,113,113,0.3);
+    }
+    .char-counter {
+      font-size: 10px;
+      color: #475569;
+      text-align: right;
+      margin-top: -6px;
+    }
+    .char-counter.warn { color: #f59e0b; }
+    .btn-translate {
+      background: linear-gradient(135deg, #f97316, #fb923c);
+      color: white;
+      box-shadow: 0 4px 15px rgba(249,115,22,0.3);
+    }
+    .btn-translate:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(249,115,22,0.45);
+    }
+    .btn-translate:active { transform: translateY(0); }
+    .btn-translate:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .copy-row {
+      display: flex;
+      justify-content: flex-end;
+    }
+    .btn-copy {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 7px;
+      color: #64748b;
+      font-size: 11px;
+      font-family: inherit;
+      padding: 5px 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-copy:hover {
+      background: rgba(255,255,255,0.05);
+      color: #94a3b8;
+    }
+    .btn-copy.copied {
+      color: #4ade80;
+      border-color: rgba(74,222,128,0.3);
+    }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+      padding: 18px 20px 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .header::before {
+      content: '';
+      position: absolute;
+      top: -30px; right: -20px;
+      width: 100px; height: 100px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 50%;
+    }
+    .header::after {
+      content: '';
+      position: absolute;
+      bottom: -20px; left: 20px;
+      width: 60px; height: 60px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 50%;
+    }
+    .header-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .logo-img {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.3px;
+    }
+    .header-sub {
+      font-size: 11px;
+      color: rgba(255,255,255,0.7);
+      font-weight: 400;
+    }
+
+    /* ── Body padding ── */
+    .body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* ── Stats Row ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .stat-card {
+      background: #1a1a2e;
+      border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: border-color 0.2s;
+    }
+    .stat-card:hover {
+      border-color: rgba(99,102,241,0.5);
+    }
+    .stat-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #64748b;
+      font-weight: 600;
+    }
+    .stat-bottom {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .stat-icon {
+      font-size: 16px;
+    }
+    .stat-val {
+      font-size: 22px;
+      font-weight: 700;
+      color: #a5b4fc;
+      line-height: 1;
+    }
+    .stat-card.due .stat-val {
+      color: #f472b6;
+    }
+    .stat-card.due {
+      border-color: rgba(244,114,182,0.2);
+    }
+    .stat-card.due:hover {
+      border-color: rgba(244,114,182,0.5);
+    }
+
+    /* ── Recent Word Card ── */
+    .recent-card {
+      background: #1a1a2e;
+      border: 1px solid rgba(99,102,241,0.15);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .recent-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #64748b;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    .recent-word {
+      font-size: 18px;
+      font-weight: 700;
+      color: #c7d2fe;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .lang-badge {
+      font-size: 9px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .lang-badge.en {
+      background: rgba(99,102,241,0.2);
+      color: #a5b4fc;
+    }
+    .lang-badge.vi {
+      background: rgba(251,146,60,0.2);
+      color: #fdba74;
+    }
+    .recent-meaning {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .meaning-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .meaning-row .lang-badge {
+      margin-top: 1px;
+      flex-shrink: 0;
+    }
+    .meaning-text {
+      color: #94a3b8;
+    }
+    .meaning-text.vi-text {
+      color: #fdba74;
+    }
+    .no-recent {
+      font-size: 12px;
+      color: #475569;
+      text-align: center;
+      padding: 8px 0;
+    }
+
+    /* ── Divider ── */
+    .divider {
+      height: 1px;
+      background: rgba(255,255,255,0.05);
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 11px 16px;
+      border: none;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: inherit;
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white;
+      box-shadow: 0 4px 15px rgba(99,102,241,0.35);
+    }
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(99,102,241,0.5);
+    }
+    .btn-primary:active {
+      transform: translateY(0);
+    }
+    .btn-outline {
+      background: transparent;
+      color: #94a3b8;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .btn-outline:hover {
+      background: rgba(255,255,255,0.05);
+      color: #e2e8f0;
+      border-color: rgba(255,255,255,0.2);
+    }
+    .btn-icon {
+      font-size: 16px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      padding: 0 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* ── PDF Button ── */
+    .btn-pdf {
+      background: linear-gradient(135deg, #0ea5e9, #6366f1);
+      color: white;
+      box-shadow: 0 4px 14px rgba(14,165,233,0.3);
+    }
+    .btn-pdf:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(14,165,233,0.45);
+    }
+    .btn-pdf:active { transform: translateY(0); }
+
+    /* ── PDF URL input row ── */
+    .pdf-url-input {
+      width: 100%;
+      padding: 9px 12px;
+      background: #1a1a2e;
+      border: 1px solid rgba(99,102,241,0.3);
+      border-radius: 8px;
+      color: #e2e8f0;
+      font-size: 11px;
+      font-family: 'Fira Code', 'Courier New', monospace;
+      outline: none;
+      transition: border-color 0.2s;
+      margin-bottom: 4px;
+    }
+    .pdf-url-input:focus {
+      border-color: rgba(99,102,241,0.7);
+      box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+    }
+    .pdf-url-input::placeholder { color: #475569; }
+    .btn-pdf-go {
+      width: 100%;
+      padding: 8px;
+      background: rgba(99,102,241,0.18);
+      border: 1px solid rgba(99,102,241,0.35);
+      border-radius: 8px;
+      color: #a5b4fc;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.18s;
+    }
+    .btn-pdf-go:hover {
+      background: rgba(99,102,241,0.3);
+      color: #c7d2fe;
+    }
+    .pdf-url-error {
+      font-size: 11px;
+      color: #f87171;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-top">
+      <img class="logo-img" src="../assets/icons/icon48.png" alt="GermanyVocab logo">
+      <span class="logo-text">GermanyVocab</span>
+    </div>
+    <div class="header-sub">Your German &amp; English vocab trainer</div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-home" data-tab="panel-home">
+      <span>🏠</span> Home
+    </button>
+    <button class="tab-btn" id="tab-translate" data-tab="panel-translate">
+      <span>🌐</span> Translate
+    </button>
+  </div>
+
+  <!-- ══ HOME PANEL ══ -->
+  <div class="tab-panel active" id="panel-home">
+    <div class="body">
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">Total Words</div>
+          <div class="stat-bottom">
+            <span class="stat-icon">📚</span>
+            <span id="total-words" class="stat-val">0</span>
+          </div>
+        </div>
+        <div class="stat-card due">
+          <div class="stat-label">Due Today</div>
+          <div class="stat-bottom">
+            <span class="stat-icon">⚡</span>
+            <span id="due-words" class="stat-val">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Word -->
+      <div class="recent-card">
+        <div class="recent-label">✨ Last Added</div>
+        <div id="recent-word-block">
+          <div class="no-recent">No words saved yet.<br>Select a word on any page to start!</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="footer">
+      <button id="open-review" class="btn btn-primary">
+        <span class="btn-icon">🎯</span>
+        Open Vocab &amp; Review
+      </button>
+
+      <!-- PDF Viewer button -->
+      <button id="open-pdf-btn" class="btn btn-pdf">
+        <span class="btn-icon">📄</span>
+        Open PDF in Viewer
+      </button>
+
+      <button id="open-options" class="btn btn-outline">
+        <span class="btn-icon">⚙️</span>
+        Settings
+      </button>
+    </div>
+  </div>
+
+  <!-- ══ TRANSLATE PANEL ══ -->
+  <div class="tab-panel" id="panel-translate">
+    <div class="translator-body">
+      <div class="lang-direction">
+        <span class="lang-pill en">🇬🇧 English</span>
+        <span class="arrow-icon">→</span>
+        <span class="lang-pill vi">🇻🇳 Vietnamese</span>
+      </div>
+
+      <div>
+        <div class="translator-label">Enter sentence</div>
+        <textarea
+          id="sentence-input"
+          class="translator-input"
+          placeholder="Type or paste an English sentence here…"
+          maxlength="500"
+          spellcheck="false"
+        ></textarea>
+        <div class="char-counter"><span id="char-count">0</span> / 500</div>
+      </div>
+
+      <button id="translate-btn" class="btn btn-translate">
+        <span>🌐</span> Translate Sentence
+      </button>
+
+      <div>
+        <div class="translator-label">Vietnamese translation</div>
+        <div id="translation-result" class="translator-result">
+          Translation will appear here…
+        </div>
+      </div>
+
+      <div class="copy-row">
+        <button id="copy-btn" class="btn-copy" style="display:none">
+          <span>📋</span> Copy
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,263 @@
+/* ── GermanyVocab Tooltip ── */
+#gv-tooltip {
+  position: absolute;
+  z-index: 2147483647;
+  width: 300px;
+  background: #0f0f1a;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 14px;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 30px rgba(99, 102, 241, 0.1);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #e2e8f0;
+  overflow: hidden;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  transform-origin: top center;
+}
+
+#gv-tooltip.gv-sentence-mode {
+  width: min(420px, calc(100vw - 20px));
+  background:
+    linear-gradient(180deg, rgba(251, 146, 60, 0.08), transparent 42%),
+    #0f0f1a;
+  border-color: rgba(251, 146, 60, 0.32);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.62),
+    0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 0 34px rgba(251, 146, 60, 0.12);
+}
+
+#gv-tooltip.gv-hide {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px) scale(0.97);
+  display: none;
+}
+
+/* ── Header ── */
+.ll-header {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 60%, #a855f7 100%);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ll-logo {
+  font-size: 13px;
+}
+
+.ll-logo-text {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.3px;
+  flex: 1;
+}
+
+.ll-close-btn {
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 10px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.ll-close-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+
+/* ── Word Row ── */
+.ll-word-row {
+  padding: 10px 14px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ll-selected-word {
+  font-size: 18px;
+  font-weight: 700;
+  color: #c7d2fe;
+  letter-spacing: -0.3px;
+}
+
+#gv-tooltip.gv-sentence-mode .ll-word-row {
+  padding: 12px 16px 4px;
+  border-bottom: 0;
+}
+
+#gv-tooltip.gv-sentence-mode .ll-selected-word {
+  color: #fdba74;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ── Body (meanings) ── */
+.ll-body {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.ll-meaning-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.ll-meaning-block.hidden,
+.ll-divider.hidden {
+  display: none;
+}
+
+.ll-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.05);
+  margin: 2px 0;
+}
+
+.ll-lang-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ll-lang-badge.ll-en {
+  background: rgba(99, 102, 241, 0.25);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.ll-lang-badge.ll-vi {
+  background: rgba(251, 146, 60, 0.2);
+  color: #fdba74;
+  border: 1px solid rgba(251, 146, 60, 0.3);
+}
+
+.ll-meaning-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #94a3b8;
+  word-wrap: break-word;
+  flex: 1;
+}
+
+.ll-meaning-text.en {
+  color: #c7d2fe;
+}
+
+.ll-meaning-text.vi {
+  color: #fdba74;
+  font-weight: 500;
+}
+
+#gv-tooltip.gv-sentence-mode .ll-body {
+  padding: 6px 16px 14px;
+}
+
+#gv-tooltip.gv-sentence-mode .ll-meaning-block {
+  padding: 10px 0 4px;
+}
+
+#gv-tooltip.gv-sentence-mode .ll-lang-badge.ll-vi {
+  margin-top: 3px;
+  background: rgba(251, 146, 60, 0.24);
+  color: #fed7aa;
+  border-color: rgba(251, 146, 60, 0.42);
+}
+
+#gv-tooltip.gv-sentence-mode .ll-meaning-text.vi {
+  color: #ffedd5;
+  font-size: 15px;
+  line-height: 1.65;
+  font-weight: 600;
+}
+
+.ll-meaning-text.loading {
+  color: #475569;
+  font-style: italic;
+  animation: ll-pulse 1.2s ease-in-out infinite;
+}
+
+.ll-meaning-text.error {
+  color: #f87171;
+}
+
+@keyframes ll-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Footer / Button ── */
+.ll-footer {
+  padding: 6px 10px 10px;
+}
+
+.ll-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.2px;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.ll-add-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.45);
+}
+
+.ll-add-btn:active {
+  transform: translateY(0);
+}
+
+.ll-add-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ll-add-btn.success {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.ll-add-btn.already {
+  background: #374151;
+  box-shadow: none;
+}
+
+.ll-spin {
+  display: inline-block;
+  animation: ll-spin 0.8s linear infinite;
+}
+
+@keyframes ll-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
