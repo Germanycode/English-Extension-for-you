@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GitHub Starter Guide</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fa;
+      --panel: #ffffff;
+      --ink: #1f2328;
+      --muted: #59636e;
+      --line: #d8dee4;
+      --soft: #eef4ff;
+      --soft-2: #fff7df;
+      --soft-3: #eaf7ef;
+      --accent: #0969da;
+      --accent-2: #bf8700;
+      --accent-3: #1a7f37;
+      --danger: #cf222e;
+      --code: #24292f;
+      --shadow: 0 18px 45px rgba(31, 35, 40, 0.10);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(180deg, rgba(246, 248, 250, 0.25), #f6f8fa 480px),
+        radial-gradient(circle at 20% 0%, rgba(9, 105, 218, 0.12), transparent 32%),
+        radial-gradient(circle at 88% 10%, rgba(26, 127, 55, 0.12), transparent 30%),
+        var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    header {
+      padding: 40px 0 22px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 34px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .mark {
+      display: grid;
+      width: 44px;
+      height: 44px;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 10px 22px rgba(31, 35, 40, 0.08);
+      font-weight: 800;
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 750;
+    }
+
+    .brand-subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .repo-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 40px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 650;
+      box-shadow: 0 8px 18px rgba(31, 35, 40, 0.06);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+      gap: 30px;
+      align-items: center;
+      padding: 24px 0 28px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 18px;
+      color: #57606a;
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 3px;
+      border-radius: 999px;
+      background: var(--accent-3);
+    }
+
+    h1 {
+      max-width: 850px;
+      margin: 0;
+      font-size: clamp(42px, 7vw, 78px);
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 690px;
+      margin: 24px 0 0;
+      color: var(--muted);
+      font-size: 19px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 750;
+      text-decoration: none;
+    }
+
+    .btn.primary {
+      background: var(--ink);
+      color: white;
+    }
+
+    .btn.secondary {
+      border-color: var(--line);
+      background: var(--panel);
+      color: var(--ink);
+    }
+
+    .terminal {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0d1117;
+      color: #e6edf3;
+      box-shadow: var(--shadow);
+    }
+
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+      background: #161b22;
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 999px;
+    }
+
+    .red { background: #ff7b72; }
+    .yellow { background: #d29922; }
+    .green { background: #3fb950; }
+
+    .terminal-body {
+      padding: 20px;
+      font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.7;
+      overflow-x: auto;
+    }
+
+    .prompt {
+      color: #7ee787;
+    }
+
+    .comment {
+      color: #8b949e;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      gap: 28px;
+      align-items: start;
+      padding: 18px 0 64px;
+    }
+
+    nav {
+      position: sticky;
+      top: 16px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 12px 30px rgba(31, 35, 40, 0.07);
+      backdrop-filter: blur(16px);
+    }
+
+    nav a {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 38px;
+      padding: 0 10px;
+      border-radius: 7px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    nav a:hover {
+      background: #f0f3f6;
+      color: var(--ink);
+      text-decoration: none;
+    }
+
+    .section {
+      margin-bottom: 22px;
+      padding: 30px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 14px 34px rgba(31, 35, 40, 0.07);
+    }
+
+    .section h2 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .section > p {
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .mini-card {
+      min-height: 100%;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .mini-card strong {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 16px;
+    }
+
+    .mini-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      margin-bottom: 12px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: var(--soft);
+      color: #0550ae;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .tag.gold {
+      background: var(--soft-2);
+      color: var(--accent-2);
+    }
+
+    .tag.green {
+      background: var(--soft-3);
+      color: var(--accent-3);
+    }
+
+    .steps {
+      display: grid;
+      gap: 14px;
+      counter-reset: step;
+    }
+
+    .step {
+      position: relative;
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr);
+      gap: 16px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      counter-increment: step;
+    }
+
+    .step::before {
+      content: counter(step);
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--ink);
+      color: white;
+      font-weight: 850;
+    }
+
+    .step h3 {
+      margin: 0 0 6px;
+      font-size: 18px;
+    }
+
+    .step p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .command {
+      margin-top: 12px;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      background: #0d1117;
+      overflow: hidden;
+    }
+
+    .command-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 10px 9px 14px;
+      border-bottom: 1px solid #30363d;
+      color: #8b949e;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .copy {
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid #30363d;
+      border-radius: 7px;
+      background: #21262d;
+      color: #e6edf3;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    pre {
+      margin: 0;
+      padding: 14px;
+      overflow-x: auto;
+      color: #e6edf3;
+      font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+    }
+
+    .workflow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .flow-item {
+      min-height: 118px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .flow-icon {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      margin-bottom: 12px;
+      border-radius: 8px;
+      background: var(--soft);
+      color: var(--accent);
+      font-weight: 900;
+    }
+
+    .flow-item strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .flow-item span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .checklist {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .checklist li {
+      display: grid;
+      grid-template-columns: 26px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      color: var(--muted);
+    }
+
+    .checklist li::before {
+      content: "✓";
+      display: grid;
+      width: 24px;
+      height: 24px;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--soft-3);
+      color: var(--accent-3);
+      font-weight: 900;
+    }
+
+    .warning {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+      margin-top: 16px;
+      padding: 16px;
+      border: 1px solid #f0d98c;
+      border-radius: 8px;
+      background: #fff8dc;
+    }
+
+    .warning-icon {
+      display: grid;
+      width: 40px;
+      height: 40px;
+      place-items: center;
+      border-radius: 8px;
+      background: #bf8700;
+      color: white;
+      font-weight: 900;
+    }
+
+    .warning strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .warning p {
+      margin: 0;
+      color: #6e5500;
+    }
+
+    footer {
+      padding: 26px 0 44px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 14px;
+    }
+
+    @media (max-width: 920px) {
+      .hero,
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      nav {
+        position: static;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .workflow,
+      .grid.three {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .shell {
+        width: min(100% - 20px, 1180px);
+      }
+
+      header {
+        padding-top: 22px;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .repo-link {
+        width: 100%;
+        justify-content: center;
+      }
+
+      h1 {
+        font-size: 40px;
+      }
+
+      .lead {
+        font-size: 16px;
+      }
+
+      .section {
+        padding: 20px;
+      }
+
+      .section h2 {
+        font-size: 24px;
+      }
+
+      nav,
+      .workflow,
+      .grid.two,
+      .grid.three {
+        grid-template-columns: 1fr;
+      }
+
+      .step {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="shell">
+    <div class="topbar">
+      <div class="brand" aria-label="Guide brand">
+        <div class="mark">GH</div>
+        <div>
+          <p class="brand-title">GitHub Starter Guide</p>
+          <p class="brand-subtitle">Built for GermanyVocab development</p>
+        </div>
+      </div>
+      <a class="repo-link" href="https://github.com/Germanycode/English-Extension-for-you" target="_blank" rel="noreferrer">
+        Open project repository
+      </a>
+    </div>
+
+    <section class="hero" id="top">
+      <div>
+        <div class="eyebrow">Beginner developer artifact</div>
+        <h1>Learn the GitHub workflow without getting lost.</h1>
+        <p class="lead">Use this page as your practical map for saving changes, pushing code, opening pull requests, and protecting API keys while working on this Chrome extension.</p>
+        <div class="actions">
+          <a class="btn primary" href="#daily">Start daily workflow</a>
+          <a class="btn secondary" href="#commands">Copy commands</a>
+        </div>
+      </div>
+
+      <div class="terminal" aria-label="Example terminal workflow">
+        <div class="terminal-bar">
+          <span class="dot red"></span>
+          <span class="dot yellow"></span>
+          <span class="dot green"></span>
+        </div>
+        <div class="terminal-body">
+          <div><span class="prompt">PS></span> git status</div>
+          <div class="comment"># See what changed</div>
+          <div><span class="prompt">PS></span> git add docs/github-for-new-devs.html</div>
+          <div class="comment"># Choose files to save</div>
+          <div><span class="prompt">PS></span> git commit -m "Add GitHub guide artifact"</div>
+          <div class="comment"># Create a checkpoint</div>
+          <div><span class="prompt">PS></span> git push</div>
+          <div class="comment"># Upload to GitHub</div>
+        </div>
+      </div>
+    </section>
+  </header>
+
+  <main class="shell layout">
+    <nav aria-label="Page sections">
+      <a href="#concepts">01 Concepts</a>
+      <a href="#setup">02 Setup</a>
+      <a href="#daily">03 Daily workflow</a>
+      <a href="#branches">04 Branches</a>
+      <a href="#commands">05 Commands</a>
+      <a href="#safety">06 Safety</a>
+      <a href="#fixes">07 Fixes</a>
+      <a href="#project">08 This project</a>
+    </nav>
+
+    <div>
+      <section class="section" id="concepts">
+        <h2>Core Concepts</h2>
+        <p>Git is the local tool. GitHub is the online home for your code.</p>
+        <div class="grid three">
+          <div class="mini-card">
+            <span class="tag">Local</span>
+            <strong>Repository</strong>
+            <p>Your project folder plus its saved history. This project folder is already a Git repository.</p>
+          </div>
+          <div class="mini-card">
+            <span class="tag green">Save point</span>
+            <strong>Commit</strong>
+            <p>A named checkpoint. Good commits are small, clear, and easy to understand later.</p>
+          </div>
+          <div class="mini-card">
+            <span class="tag gold">Online copy</span>
+            <strong>Remote</strong>
+            <p>The GitHub repository. In this project it is named <strong>origin</strong>.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="setup">
+        <h2>First-Time Setup</h2>
+        <p>Do this once on a new computer so Git knows who is creating commits.</p>
+        <div class="steps">
+          <div class="step">
+            <div>
+              <h3>Install Git</h3>
+              <p>Download Git for Windows, then restart PowerShell or your editor terminal.</p>
+              <div class="command">
+                <div class="command-head"><span>Check Git</span><button class="copy" type="button">Copy</button></div>
+                <pre><code>git --version</code></pre>
+              </div>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <h3>Set your identity</h3>
+              <p>Use the same name and email you want shown on GitHub commits.</p>
+              <div class="command">
+                <div class="command-head"><span>Configure Git</span><button class="copy" type="button">Copy</button></div>
+                <pre><code>git config --global user.name "Your Name"
+git config --global user.email "you@example.com"</code></pre>
+              </div>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <h3>Connect GitHub</h3>
+              <p>Sign in on GitHub. GitHub CLI is optional, but useful for pull requests and authentication.</p>
+              <div class="command">
+                <div class="command-head"><span>Optional GitHub CLI</span><button class="copy" type="button">Copy</button></div>
+                <pre><code>gh auth login
+gh auth status</code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="daily">
+        <h2>Daily Workflow</h2>
+        <p>This is the loop you will use most often when building features or fixing bugs.</p>
+        <div class="workflow" aria-label="Daily Git workflow">
+          <div class="flow-item">
+            <div class="flow-icon">1</div>
+            <strong>Edit</strong>
+            <span>Change files in your project.</span>
+          </div>
+          <div class="flow-item">
+            <div class="flow-icon">2</div>
+            <strong>Status</strong>
+            <span>Check what changed before saving.</span>
+          </div>
+          <div class="flow-item">
+            <div class="flow-icon">3</div>
+            <strong>Stage</strong>
+            <span>Choose which files belong in the commit.</span>
+          </div>
+          <div class="flow-item">
+            <div class="flow-icon">4</div>
+            <strong>Commit</strong>
+            <span>Create a clear checkpoint.</span>
+          </div>
+          <div class="flow-item">
+            <div class="flow-icon">5</div>
+            <strong>Push</strong>
+            <span>Upload your commit to GitHub.</span>
+          </div>
+        </div>
+        <div class="command">
+          <div class="command-head"><span>Daily command set</span><button class="copy" type="button">Copy</button></div>
+          <pre><code>git status
+git diff
+git add path/to/file
+git commit -m "Describe the change"
+git push</code></pre>
+        </div>
+      </section>
+
+      <section class="section" id="branches">
+        <h2>Branches and Pull Requests</h2>
+        <p>A branch lets you work without disturbing the main project line. A pull request is where you review and merge that work.</p>
+        <div class="grid two">
+          <div class="mini-card">
+            <span class="tag">Feature branch</span>
+            <strong>Use a branch for new work</strong>
+            <p>Branches make it easier to test, review, and undo one idea without mixing it with everything else.</p>
+            <div class="command">
+              <div class="command-head"><span>Create branch</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git switch -c feature/short-description</code></pre>
+            </div>
+          </div>
+          <div class="mini-card">
+            <span class="tag green">Pull request</span>
+            <strong>Ask GitHub to compare branches</strong>
+            <p>After pushing a branch, open a pull request on GitHub and compare it with <strong>master</strong>.</p>
+            <div class="command">
+              <div class="command-head"><span>Push branch</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git push -u origin feature/short-description</code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="commands">
+        <h2>Command Cheat Sheet</h2>
+        <p>Copy the command you need. Replace example paths and messages with your real work.</p>
+        <div class="grid two">
+          <div class="mini-card">
+            <strong>See changed files</strong>
+            <div class="command">
+              <div class="command-head"><span>Status</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git status</code></pre>
+            </div>
+          </div>
+          <div class="mini-card">
+            <strong>See exact edits</strong>
+            <div class="command">
+              <div class="command-head"><span>Diff</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git diff</code></pre>
+            </div>
+          </div>
+          <div class="mini-card">
+            <strong>Stage one file</strong>
+            <div class="command">
+              <div class="command-head"><span>Add</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git add docs/github-for-new-devs.html</code></pre>
+            </div>
+          </div>
+          <div class="mini-card">
+            <strong>Commit staged files</strong>
+            <div class="command">
+              <div class="command-head"><span>Commit</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git commit -m "Add GitHub guide artifact"</code></pre>
+            </div>
+          </div>
+          <div class="mini-card">
+            <strong>Get latest GitHub changes</strong>
+            <div class="command">
+              <div class="command-head"><span>Pull</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git pull</code></pre>
+            </div>
+          </div>
+          <div class="mini-card">
+            <strong>Upload your commits</strong>
+            <div class="command">
+              <div class="command-head"><span>Push</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git push</code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="safety">
+        <h2>Protect API Keys</h2>
+        <p>Secrets do not belong in GitHub. Treat API keys like passwords.</p>
+        <ul class="checklist">
+          <li>Keep real API keys in local browser storage, environment files, or a private backend.</li>
+          <li>Never paste a real key into JavaScript, HTML, screenshots, logs, or documentation.</li>
+          <li>Run <strong>git status</strong> and check file names before every commit.</li>
+          <li>Use <strong>.gitignore</strong> for local logs, generated screenshots, credentials, and environment files.</li>
+          <li>If a secret was pushed, rotate that key immediately and remove it from Git history.</li>
+        </ul>
+        <div class="warning">
+          <div class="warning-icon">!</div>
+          <div>
+            <strong>Important for this extension</strong>
+            <p>The Gemini key field in the options page is for your local browser. Do not hard-code your personal key into the project files.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="fixes">
+        <h2>Common Fixes</h2>
+        <p>These commands help when you staged the wrong thing or need to inspect history.</p>
+        <div class="grid two">
+          <div class="mini-card">
+            <strong>Unstage without deleting edits</strong>
+            <div class="command">
+              <div class="command-head"><span>Restore staged</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git restore --staged path/to/file</code></pre>
+            </div>
+          </div>
+          <div class="mini-card">
+            <strong>Discard edits in one file</strong>
+            <div class="command">
+              <div class="command-head"><span>Restore file</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git restore path/to/file</code></pre>
+            </div>
+          </div>
+          <div class="mini-card">
+            <strong>See recent commits</strong>
+            <div class="command">
+              <div class="command-head"><span>Log</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git log --oneline -5</code></pre>
+            </div>
+          </div>
+          <div class="mini-card">
+            <strong>Check GitHub remote</strong>
+            <div class="command">
+              <div class="command-head"><span>Remote</span><button class="copy" type="button">Copy</button></div>
+              <pre><code>git remote -v</code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="project">
+        <h2>This Project</h2>
+        <p>Use these rules when working on GermanyVocab.</p>
+        <div class="grid two">
+          <div class="mini-card">
+            <span class="tag green">Usually commit</span>
+            <strong>Project source files</strong>
+            <p><strong>manifest.json</strong>, <strong>background/</strong>, <strong>content/</strong>, <strong>popup/</strong>, <strong>options/</strong>, <strong>review/</strong>, <strong>pdf-viewer/</strong>, <strong>assets/</strong>, and <strong>docs/</strong>.</p>
+          </div>
+          <div class="mini-card">
+            <span class="tag gold">Do not commit</span>
+            <strong>Local or private files</strong>
+            <p>API keys, <strong>.env</strong> files, credentials, generated logs, local screenshots, <strong>node_modules/</strong>, and temporary browser verification output.</p>
+          </div>
+        </div>
+        <div class="command">
+          <div class="command-head"><span>Current project remote</span><button class="copy" type="button">Copy</button></div>
+          <pre><code>git remote add origin https://github.com/Germanycode/English-Extension-for-you.git
+git push -u origin master</code></pre>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="shell">
+    Open this file anytime when you need a GitHub refresher: docs/github-for-new-devs.html
+  </footer>
+
+  <script>
+    const copyButtons = document.querySelectorAll(".copy");
+
+    copyButtons.forEach((button) => {
+      button.addEventListener("click", async () => {
+        const command = button.closest(".command");
+        const code = command ? command.querySelector("code") : null;
+        if (!code) return;
+
+        const text = code.innerText.trim();
+        try {
+          await navigator.clipboard.writeText(text);
+          const oldText = button.textContent;
+          button.textContent = "Copied";
+          window.setTimeout(() => {
+            button.textContent = oldText;
+          }, 1200);
+        } catch (error) {
+          button.textContent = "Select";
+          code.focus();
+        }
+      });
+    });
+  </script>
+</body>
+</html>

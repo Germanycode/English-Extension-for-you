@@ -2,6 +2,13 @@
 
 This file provides guidance to my agent model in Antigravity when working with code in this repository.
 
+## Agent Operating Preferences
+
+- When the user asks for an "artifact", create a polished, easy-to-use HTML file unless they explicitly request another format. Store it in `docs/` and tell the user the exact file path.
+- Do not run `git push`, publish code, or otherwise push terminal changes to GitHub unless the user explicitly asks for that specific action in the current turn.
+- Do not commit or push API keys, credentials, `.env` files, local browser logs, generated screenshots, or other private/local artifacts.
+- Before any GitHub publishing work, scan for key-shaped secrets and confirm the intended files. Prefer editing files and reporting their locations when the user only asks for a local artifact.
+
 ## Project Overview
 
 **GermanyVocab** is a Chrome Extension (Manifest V3) for learning German/English vocabulary on any website. It translates selected text, saves words to a personal list, and schedules reviews using Spaced Repetition (SM-2).
@@ -14,15 +21,15 @@ No build step. Load directly in Chrome via `chrome://extensions` with **Develope
 
 The extension entry points communicate via `chrome.runtime.sendMessage`:
 
-| File | Role |
-|---|---|
-| `background/background.js` | Service worker. Handles `translate`, `lemmatizeWord`, `fetchCollocations`, `saveVocab`, `generateStory`, `evaluateSentence`, `openPdfViewer`, and `applyCustomIcon` messages. Owns translation/API calls and SM-2 initialization for new words. Restores custom icon on every service worker startup. |
-| `content/content.js` | Injected into every page. Detects text selection (1-4 English words), extracts sentence context for single-word selections, shows a floating tooltip with lemma-aware translation + English definition, and lets the user save words. |
-| `popup/popup.html+js` | Extension toolbar popup. Two tabs: sentence translator (delegates to background) and vocab stats (reads `chrome.storage.local` directly). Applies custom app name and icon from storage on load. |
-| `review/review.html+js` | Full-page review dashboard. Vocab table with delete, review gate/lobby, MCQ flashcard quiz, music player, story mode, native Gemini Live speaking coach, and advanced review types. All SM-2 scheduling updates happen here. |
-| `options/options.html+js` | Settings page with personalization and optional API keys for Google Translate + Gemini. |
-| `pdf-viewer/pdf-viewer.html+js` | Bundled PDF.js viewer with selectable text so the content script can translate selections inside PDFs. |
-| `assets/musics/music-tracks.js` | Shared plain-JS registry of bundled MP3 background music tracks used by the review dashboard and PDF viewer. Add new bundled MP3 files here to expose them in the music selectors. |
+| File                            | Role                                                                                                                                                                                                                                                                                                  |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `background/background.js`      | Service worker. Handles `translate`, `lemmatizeWord`, `fetchCollocations`, `saveVocab`, `generateStory`, `evaluateSentence`, `openPdfViewer`, and `applyCustomIcon` messages. Owns translation/API calls and SM-2 initialization for new words. Restores custom icon on every service worker startup. |
+| `content/content.js`            | Injected into every page. Detects text selection (1-4 English words), extracts sentence context for single-word selections, shows a floating tooltip with lemma-aware translation + English definition, and lets the user save words.                                                                 |
+| `popup/popup.html+js`           | Extension toolbar popup. Two tabs: sentence translator (delegates to background) and vocab stats (reads `chrome.storage.local` directly). Applies custom app name and icon from storage on load.                                                                                                      |
+| `review/review.html+js`         | Full-page review dashboard. Vocab table with delete, review gate/lobby, MCQ flashcard quiz, music player, story mode, native Gemini Live speaking coach, and advanced review types. All SM-2 scheduling updates happen here.                                                                          |
+| `options/options.html+js`       | Settings page with personalization and optional API keys for Google Translate + Gemini.                                                                                                                                                                                                               |
+| `pdf-viewer/pdf-viewer.html+js` | Bundled PDF.js viewer with selectable text so the content script can translate selections inside PDFs.                                                                                                                                                                                                |
+| `assets/musics/music-tracks.js` | Shared plain-JS registry of bundled MP3 background music tracks used by the review dashboard and PDF viewer. Add new bundled MP3 files here to expose them in the music selectors.                                                                                                                    |
 
 ## Data Model
 
@@ -81,7 +88,7 @@ For single-word selections, `content.js` sends `type: "lemmatizeWord"` with the 
 
 Simple local context hints prefer a likely part of speech when multiple candidates are possible, for example preferring `see` for a verb-like `saw` context or `saw` for a noun-like context.
 
-Before translation, `background.js` validates the candidate lemma with the Free Dictionary API. If the lemma is valid, the content script translates the lemma; if invalid, it translates the original selected word. The tooltip displays the surface form and base form, for example `saw -> see`.
+The bundled lemmatizer supplies the candidate base form immediately, so translation never waits for dictionary metadata. DictionaryAPI and Datamuse/WordNet lookup run in parallel in the background to supply an English definition, part of speech, and (when DictionaryAPI responds) phonetic text. The first valid result is used, it has a short timeout, and is cached while the service worker is alive. The tooltip displays the surface form and base form, for example `saw -> see`.
 
 For phrases or multi-word selections, the extension keeps the existing direct translation flow.
 
@@ -97,7 +104,7 @@ The review dashboard (`review/review.html+js`) supports multiple question types 
 
 ## Media & Metadata
 
-- Newly saved words automatically fetch `synonyms`, `antonyms`, `pronunciation`, `audioUrl`, and dictionary `context` from the Free Dictionary API, `collocations` from Datamuse, and `imageUrl` from the Pixabay API.
+- Newly saved words automatically fetch `synonyms`, `antonyms`, `pronunciation`, `audioUrl`, and dictionary `context` from the Free Dictionary API, `collocations` from Datamuse, and `imageUrl` from a background image lookup. Image lookup is cache-backed, uses short provider timeouts, ranks several Pixabay results by tags, and does not delay saving or rendering the Review summary. In the tooltip and Quick Translate popup, IPA falls back to Wiktionary when DictionaryAPI has no response; playback uses Chrome TTS with the browser SpeechSynthesis API as a fallback.
 - Legacy words missing these fields fetch and persist them dynamically on the first review session (`fetchMissingMedia` in `review.js`).
 
 ## API Integration

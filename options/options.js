@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
   restoreOptions();
   restorePersonalization();
   applyPersonalization();
+  populateTtsVoices();
 
   // Listen for setting changes
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -55,10 +56,18 @@ function restorePersonalization() {
 function saveOptions() {
   const googleApiKey = document.getElementById('googleApiKey').value;
   const geminiApiKey = document.getElementById('geminiApiKey').value;
+  const unsplashAccessKey = document.getElementById('unsplashAccessKey').value;
+  const pixabayApiKey = document.getElementById('pixabayApiKey')?.value || '';
+  const voiceSelect = document.getElementById('preferredTtsVoice');
+  const selectedVoice = voiceSelect?.selectedOptions?.[0];
 
   chrome.storage.local.set({
     googleApiKey: googleApiKey,
-    geminiApiKey: geminiApiKey
+    geminiApiKey: geminiApiKey,
+    unsplashAccessKey: unsplashAccessKey,
+    pixabayApiKey: pixabayApiKey.trim(),
+    preferredTtsVoice: voiceSelect?.value || '',
+    preferredTtsVoiceLang: selectedVoice?.dataset.lang || ''
   }, function() {
     const status = document.getElementById('status');
     status.textContent = 'Options saved successfully!';
@@ -73,11 +82,69 @@ function saveOptions() {
 function restoreOptions() {
   chrome.storage.local.get({
     googleApiKey: '',
-    geminiApiKey: ''
+    geminiApiKey: '',
+    unsplashAccessKey: '',
+    pixabayApiKey: ''
   }, function(items) {
     document.getElementById('googleApiKey').value = items.googleApiKey;
     document.getElementById('geminiApiKey').value = items.geminiApiKey;
+    if (document.getElementById('unsplashAccessKey')) {
+      document.getElementById('unsplashAccessKey').value = items.unsplashAccessKey;
+    }
+    if (document.getElementById('pixabayApiKey')) {
+      document.getElementById('pixabayApiKey').value = items.pixabayApiKey || '';
+    }
   });
+}
+
+async function populateTtsVoices() {
+  const select = document.getElementById('preferredTtsVoice');
+  const help = document.getElementById('ttsVoiceHelp');
+  if (!select || !chrome.tts?.getVoices) return;
+
+  try {
+    const [voices, saved] = await Promise.all([
+      chrome.tts.getVoices(),
+      chrome.storage.local.get({ preferredTtsVoice: '' })
+    ]);
+    const englishVoices = voices
+      .filter(voice => /^en(?:-|$)/i.test(voice.lang || '') && voice.voiceName)
+      .sort((left, right) => scoreVoice(right) - scoreVoice(left) || left.voiceName.localeCompare(right.voiceName));
+
+    select.textContent = '';
+    const automatic = document.createElement('option');
+    automatic.value = '';
+    automatic.textContent = 'Automatic (Chrome default)';
+    select.appendChild(automatic);
+
+    for (const voice of englishVoices) {
+      const option = document.createElement('option');
+      option.value = voice.voiceName;
+      option.dataset.lang = voice.lang;
+      const recommendation = scoreVoice(voice) > 0 ? 'Recommended · ' : '';
+      option.textContent = `${recommendation}${voice.voiceName} (${voice.lang})`;
+      select.appendChild(option);
+    }
+
+    select.value = saved.preferredTtsVoice || '';
+    if (select.value !== (saved.preferredTtsVoice || '')) select.value = '';
+    select.disabled = false;
+    if (englishVoices.length === 0 && help) {
+      help.textContent = 'No English system voices were found. Install an English voice in Windows, then reopen this page.';
+    }
+  } catch (error) {
+    select.textContent = '';
+    const option = document.createElement('option');
+    option.textContent = 'Could not load voices';
+    option.value = '';
+    select.appendChild(option);
+    if (help) help.textContent = 'Chrome could not list system voices. Automatic playback remains available.';
+  }
+}
+
+function scoreVoice(voice) {
+  const descriptor = `${voice.voiceName || ''} ${voice.lang || ''}`.toLowerCase();
+  return /natural|online|neural|enhanced|premium|google|microsoft/.test(descriptor) ? 1 : 0;
 }
 
 function applyPersonalization() {

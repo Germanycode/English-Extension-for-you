@@ -206,8 +206,34 @@
     .header-top {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
       margin-bottom: 4px;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .header-level-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.16);
+      backdrop-filter: blur(8px);
+      padding: 3px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .header-level-pill .level-badge {
+      background: #f59e0b;
+      color: #1a1a2e;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 700;
     }
     .logo-img {
       width: 28px;
@@ -239,8 +265,8 @@
     /* ── Stats Row ── */
     .stats-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
     }
     .stat-card {
       background: #1a1a2e;
@@ -286,29 +312,163 @@
       border-color: rgba(244,114,182,0.5);
     }
 
-    /* ── Recent Word Card ── */
-    .recent-card {
+    /* ── Quick Translate Card ── */
+    .quick-translate-card {
       background: #1a1a2e;
       border: 1px solid rgba(99,102,241,0.15);
       border-radius: 12px;
       padding: 14px;
     }
-    .recent-label {
+    .qt-label {
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.6px;
       color: #64748b;
       font-weight: 600;
       margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
     }
-    .recent-word {
-      font-size: 18px;
+    .qt-input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .qt-input {
+      flex: 1;
+      padding: 9px 12px;
+      background: #12121f;
+      border: 1px solid rgba(99,102,241,0.25);
+      border-radius: 8px;
+      color: #e2e8f0;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .qt-input::placeholder { color: #475569; }
+    .qt-input:focus {
+      border-color: rgba(99,102,241,0.6);
+      box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+    }
+    .qt-search-btn {
+      padding: 9px 14px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border: none;
+      border-radius: 8px;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .qt-search-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(99,102,241,0.4);
+    }
+    .qt-search-btn:active { transform: translateY(0); }
+    .qt-search-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    /* Result area */
+    .qt-result {
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      animation: qt-fade-in 0.25s ease;
+    }
+    .qt-result.visible { display: flex; }
+    @keyframes qt-fade-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .qt-word-heading {
+      font-size: 17px;
       font-weight: 700;
       color: #c7d2fe;
-      margin-bottom: 6px;
       display: flex;
       align-items: center;
       gap: 8px;
+      flex-wrap: wrap;
+    }
+    .qt-lemma-arrow {
+      font-size: 12px;
+      color: #475569;
+    }
+    .qt-pos-badge {
+      font-size: 9px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 4px;
+      background: rgba(139,92,246,0.2);
+      color: #c4b5fd;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    /* Pronunciation */
+    .qt-pronunciation-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 2px;
+    }
+    .qt-speak-btn {
+      background: rgba(99,102,241,0.18);
+      border: 1px solid rgba(99,102,241,0.3);
+      color: #a5b4fc;
+      font-size: 14px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      flex-shrink: 0;
+      padding: 0;
+      line-height: 1;
+    }
+    .qt-speak-btn:hover {
+      background: rgba(99,102,241,0.35);
+      transform: scale(1.1);
+    }
+    .qt-speak-btn:active { transform: scale(0.95); }
+    .qt-speak-btn.playing {
+      background: rgba(99,102,241,0.4);
+      border-color: rgba(99,102,241,0.6);
+      animation: qt-speak-pulse 0.8s ease-in-out infinite;
+    }
+    @keyframes qt-speak-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0.3); }
+      50% { box-shadow: 0 0 0 5px rgba(99,102,241,0); }
+    }
+    .qt-accent-toggle {
+      background: transparent;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      color: #94a3b8;
+      font-size: 9px;
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .qt-accent-toggle:hover {
+      background: rgba(148, 163, 184, 0.1);
+      color: #e2e8f0;
+    }
+    .qt-phonetic {
+      font-size: 12px;
+      color: #64748b;
+      font-style: italic;
+      letter-spacing: 0.3px;
     }
     .lang-badge {
       font-size: 9px;
@@ -326,33 +486,74 @@
       background: rgba(251,146,60,0.2);
       color: #fdba74;
     }
-    .recent-meaning {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .meaning-row {
+    .qt-meaning-row {
       display: flex;
       align-items: flex-start;
       gap: 8px;
       font-size: 13px;
-      line-height: 1.4;
+      line-height: 1.5;
     }
-    .meaning-row .lang-badge {
-      margin-top: 1px;
+    .qt-meaning-row .lang-badge {
+      margin-top: 2px;
       flex-shrink: 0;
     }
-    .meaning-text {
+    .qt-meaning-text {
       color: #94a3b8;
     }
-    .meaning-text.vi-text {
+    .qt-meaning-text.vi {
       color: #fdba74;
     }
-    .no-recent {
+    .qt-meaning-text.loading {
+      color: #475569;
+      font-style: italic;
+    }
+    .qt-meaning-text.error {
+      color: #f87171;
+    }
+
+    /* Add to Vocab button */
+    .qt-add-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      width: 100%;
+      padding: 8px 14px;
+      margin-top: 4px;
+      background: rgba(74,222,128,0.12);
+      border: 1px solid rgba(74,222,128,0.25);
+      border-radius: 8px;
+      color: #4ade80;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .qt-add-btn:hover {
+      background: rgba(74,222,128,0.2);
+      border-color: rgba(74,222,128,0.45);
+    }
+    .qt-add-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .qt-add-btn.success {
+      background: rgba(74,222,128,0.25);
+      color: #86efac;
+      border-color: rgba(74,222,128,0.5);
+    }
+    .qt-add-btn.already {
+      background: rgba(251,191,36,0.12);
+      color: #fbbf24;
+      border-color: rgba(251,191,36,0.3);
+    }
+
+    .qt-idle-hint {
       font-size: 12px;
       color: #475569;
       text-align: center;
-      padding: 8px 0;
+      padding: 6px 0;
     }
 
     /* ── Divider ── */
@@ -471,8 +672,14 @@
 
   <div class="header">
     <div class="header-top">
-      <img class="logo-img" src="../assets/icons/icon48.png" alt="GermanyVocab logo">
-      <span class="logo-text">GermanyVocab</span>
+      <div class="header-left">
+        <img class="logo-img" src="../assets/icons/icon48.png" alt="GermanyVocab logo">
+        <span class="logo-text">GermanyVocab</span>
+      </div>
+      <div class="header-level-pill" id="header-level-pill" title="Your learning level & XP">
+        <span class="level-badge" id="popup-level-badge">Lv. 1</span>
+        <span class="xp-text" id="popup-xp-text">0 XP</span>
+      </div>
     </div>
     <div class="header-sub">Your German &amp; English vocab trainer</div>
   </div>
@@ -493,27 +700,55 @@
       <!-- Stats -->
       <div class="stats-row">
         <div class="stat-card">
-          <div class="stat-label">Total Words</div>
+          <div class="stat-label">Words</div>
           <div class="stat-bottom">
             <span class="stat-icon">📚</span>
             <span id="total-words" class="stat-val">0</span>
           </div>
         </div>
         <div class="stat-card due">
-          <div class="stat-label">Due Today</div>
+          <div class="stat-label">Due</div>
           <div class="stat-bottom">
             <span class="stat-icon">⚡</span>
             <span id="due-words" class="stat-val">0</span>
           </div>
         </div>
+        <div class="stat-card streak">
+          <div class="stat-label">Streak</div>
+          <div class="stat-bottom">
+            <span class="stat-icon">🔥</span>
+            <span id="streak-days" class="stat-val">0</span>
+          </div>
+        </div>
       </div>
 
-      <!-- Recent Word -->
-      <div class="recent-card">
-        <div class="recent-label">✨ Last Added</div>
-        <div id="recent-word-block">
-          <div class="no-recent">No words saved yet.<br>Select a word on any page to start!</div>
+      <!-- Quick Translate -->
+      <div class="quick-translate-card">
+        <div class="qt-label">🔍 Quick Translate</div>
+        <div class="qt-input-row">
+          <input type="text" id="qt-word-input" class="qt-input" placeholder="Type a word to translate…" spellcheck="false" autocomplete="off" />
+          <button id="qt-search-btn" class="qt-search-btn" title="Translate">🔎</button>
         </div>
+        <div id="qt-result" class="qt-result">
+          <div id="qt-word-heading" class="qt-word-heading"></div>
+          <div id="qt-pronunciation-row" class="qt-pronunciation-row" style="display:none">
+            <button id="qt-speak-btn" class="qt-speak-btn" title="Listen to pronunciation">🔊</button>
+            <button id="qt-accent-toggle" class="qt-accent-toggle" title="Switch Accent">US</button>
+            <span id="qt-phonetic" class="qt-phonetic"></span>
+          </div>
+          <div class="qt-meaning-row">
+            <span class="lang-badge en">EN</span>
+            <span id="qt-en-meaning" class="qt-meaning-text loading">Looking up…</span>
+          </div>
+          <div class="qt-meaning-row">
+            <span class="lang-badge vi">VI</span>
+            <span id="qt-vi-meaning" class="qt-meaning-text loading">Translating…</span>
+          </div>
+          <button id="qt-add-btn" class="qt-add-btn" style="display:none">
+            <span>+</span> Add to Vocab
+          </button>
+        </div>
+        <div id="qt-idle-hint" class="qt-idle-hint">Type any English word and press Enter</div>
       </div>
     </div>
 

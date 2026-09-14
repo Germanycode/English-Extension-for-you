@@ -44,12 +44,36 @@
         <p class="help-text">Get your API key from <a href="https://console.cloud.google.com/apis/library/translate.googleapis.com" target="_blank">Google Cloud Console</a>.</p>
       </div>
 
+      <h2>Free Pronunciation Voice</h2>
+      <p>Choose an English voice installed in Chrome or Windows. Voices labelled Natural or Online usually sound more native; availability depends on your device.</p>
+      <div class="form-group">
+        <label for="preferredTtsVoice">English voice</label>
+        <select id="preferredTtsVoice" disabled>
+          <option value="">Loading available voices…</option>
+        </select>
+        <p id="ttsVoiceHelp" class="help-text">Use “Automatic” to let Chrome choose. Install an English Natural/Online voice in Windows to improve free playback quality.</p>
+      </div>
+
       <h2>Story Generator Setup</h2>
       <p>We use Gemini API to generate funny stories using your vocabulary.</p>
       <div class="form-group">
         <label for="geminiApiKey">Gemini API Key</label>
         <input type="password" id="geminiApiKey" placeholder="Enter your Gemini API key here">
         <p class="help-text">Get your API key from <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>.</p>
+      </div>
+
+      <h2>Image Setup</h2>
+      <p>We use Unsplash to find high-quality images for your vocabulary words.</p>
+      <div class="form-group">
+        <label for="unsplashAccessKey">Unsplash Access Key (Optional)</label>
+        <input type="password" id="unsplashAccessKey" placeholder="Leave blank to use Pixabay fallback">
+        <p class="help-text">Get a free developer key from <a href="https://unsplash.com/developers" target="_blank">Unsplash Developers</a>.</p>
+      </div>
+
+      <div class="form-group">
+        <label for="pixabayApiKey">Pixabay API Key (Optional)</label>
+        <input type="password" id="pixabayApiKey" placeholder="Leave blank to use default built-in key">
+        <p class="help-text">Get a free key from <a href="https://pixabay.com/api/docs/" target="_blank">Pixabay API</a>.</p>
       </div>
 
       <button id="saveBtn" class="btn primary">Save Settings</button>

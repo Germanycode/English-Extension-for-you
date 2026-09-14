@@ -4,6 +4,21 @@ let sessionTotal = 0;      // total words at start of this session
 let currentReviewIndex = 0;
 let currentWord = null;
 let reviewGateTimer = null;
+let questionStartTime = 0; // timestamp when the current question was shown
+let reviewSessionTimer = null;
+let sessionOutcomeRecordedForCurrent = false;
+const reviewSession = {
+  startedAt: 0,
+  answered: 0,
+  correct: 0,
+  mistakes: new Map(),
+  lastOutcome: null
+};
+const storyStudy = {
+  selectedWords: [],
+  exploredWords: new Set(),
+  fontScale: 1
+};
 let liveCoachSocket = null;
 let liveCoachStream = null;
 let liveCoachAudioContext = null;
@@ -19,6 +34,7 @@ let liveCoachActiveSpeechFrames = 0;
 let liveCoachSilentFrames = 0;
 let liveCoachLastAudioSentAt = 0;
 let liveCoachPausedMusic = false;
+const liveCoachPlaybackSources = new Set();
 const LIVE_COACH_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
 const LIVE_COACH_INPUT_RATE = 16000;
 const LIVE_COACH_MIN_RMS = 0.012;
@@ -66,7 +82,11 @@ function init() {
   applyPersonalization();
   loadData();
   setupNavigation();
-  document.getElementById('export-btn').addEventListener('click', exportData);
+  initVocabFilters();
+  initImportExport();
+  initStatisticsView();
+  initTypingQuizListeners();
+  initTagsSystem();
   document.getElementById('back-to-vocab').addEventListener('click', () => switchView('vocab-view'));
   document.getElementById('generate-story-btn').addEventListener('click', handleGenerateStory);
   document.getElementById('generate-another-story-btn').addEventListener('click', handleGenerateStory);
@@ -77,6 +97,21 @@ function init() {
   document.getElementById('batch-delete-btn').addEventListener('click', deleteSelected);
   document.getElementById('next-question-btn').addEventListener('click', handleNextQuestionBtn);
   document.getElementById('summary-audio-btn').addEventListener('click', playSummaryAudio);
+  document.getElementById('retry-mistakes-btn').addEventListener('click', startMistakeReview);
+  document.addEventListener('keydown', handleReviewShortcuts);
+
+  const summaryAccentToggle = document.getElementById('summary-accent-toggle');
+  if (summaryAccentToggle) {
+    summaryAccentToggle.addEventListener('click', () => {
+      const current = summaryAccentToggle.textContent === 'US' ? 'UK' : 'US';
+      summaryAccentToggle.textContent = current;
+      chrome.storage.local.set({ preferredAccent: current });
+    });
+    chrome.storage.local.get({ preferredAccent: 'US' }, (data) => {
+      summaryAccentToggle.textContent = data.preferredAccent;
+    });
+  }
+
   document.getElementById('gate-start-btn').addEventListener('click', () => startReview(true));
   document.getElementById('gate-shuffle-btn').addEventListener('click', shuffleReviewGateQueue);
   document.getElementById('gate-peek-btn').addEventListener('click', toggleReviewGatePeek);
@@ -101,6 +136,9 @@ function init() {
 
   // Listen for setting changes
   chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.vocabList) {
+      syncVocabList(changes.vocabList.newValue || []);
+    }
     if (area === 'local' && (changes.appName || changes.customIconDataUrl)) {
       applyPersonalization();
     }
@@ -298,6 +336,9 @@ function setupNavigation() {
 
       if (targetId === 'review-view') {
         showReviewGate();
+      } else if (targetId === 'stats-view') {
+        renderStatistics();
+        stopReviewGateTimer();
       } else {
         stopReviewGateTimer();
       }
@@ -314,6 +355,8 @@ function switchView(viewId) {
   document.querySelectorAll('.nav-links li').forEach(n => {
     n.classList.toggle('active', n.getAttribute('data-target') === viewId);
   });
+
+  if (viewId !== 'review-view') stopReviewSessionTimer();
 }
 
 // ── Data Loading ─────────────────────────────────────────────
@@ -326,6 +369,7 @@ function loadData() {
     prepareReviewSession();
     renderStoryWordList();
     backfillPartOfSpeech();
+    renderStatistics();
   });
 }
 
@@ -339,31 +383,180 @@ function cleanupGeneratedVocabularyImages() {
   });
 
   if (changed) {
-    chrome.storage.local.set({ vocabList: fullVocabList });
+    updateStoredVocabList(list => {
+      list.forEach(item => {
+        if (isGeneratedVocabularyImage(item.imageUrl)) item.imageUrl = '';
+      });
+      return list;
+    });
   }
 }
 
-// ── Vocabulary Table ─────────────────────────────────────────
+// ── Vocabulary Table & Filters ───────────────────────────────
+
+let vocabSearchQuery = '';
+let vocabMasteryFilter = 'all';
+let vocabPosFilter = 'all';
+let vocabSortBy = 'date-desc';
+let vocabTagFilter = 'all';
+let reviewGateTagFilter = 'all';
+
+function initVocabFilters() {
+  const searchInput = document.getElementById('vocab-search-input');
+  const clearBtn = document.getElementById('vocab-search-clear');
+  const masterySelect = document.getElementById('filter-mastery');
+  const posSelect = document.getElementById('filter-pos');
+  const sortSelect = document.getElementById('filter-sort');
+  const tagSelect = document.getElementById('filter-tag');
+
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      vocabSearchQuery = searchInput.value.trim().toLowerCase();
+      if (clearBtn) clearBtn.classList.toggle('hidden', !vocabSearchQuery);
+      renderVocabTable();
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (searchInput) searchInput.value = '';
+      vocabSearchQuery = '';
+      clearBtn.classList.add('hidden');
+      renderVocabTable();
+    });
+  }
+
+  if (masterySelect) {
+    masterySelect.addEventListener('change', () => {
+      vocabMasteryFilter = masterySelect.value;
+      renderVocabTable();
+    });
+  }
+
+  if (posSelect) {
+    posSelect.addEventListener('change', () => {
+      vocabPosFilter = posSelect.value;
+      renderVocabTable();
+    });
+  }
+
+  if (tagSelect) {
+    tagSelect.addEventListener('change', () => {
+      vocabTagFilter = tagSelect.value;
+      renderVocabTable();
+    });
+  }
+
+  if (sortSelect) {
+    sortSelect.addEventListener('change', () => {
+      vocabSortBy = sortSelect.value;
+      renderVocabTable();
+    });
+  }
+}
 
 function renderVocabTable() {
-  // BUG FIX: use the specific ID selector, not querySelector('table') which grabs the first match
   const tbody = document.querySelector('#vocab-table tbody');
   const emptyState = document.getElementById('empty-state');
   const vocabTable = document.getElementById('vocab-table');
 
   tbody.innerHTML = '';
 
+  updateTagFilterDropdowns();
+
+  let filtered = [...fullVocabList];
+
+  // 1. Search Query Filter
+  if (vocabSearchQuery) {
+    filtered = filtered.filter(item => {
+      const w = String(item.word || '').toLowerCase();
+      const vi = String(item.translation || '').toLowerCase();
+      const en = String(item.englishMeaning || '').toLowerCase();
+      const ctx = String(item.context || '').toLowerCase();
+      const tagsStr = Array.isArray(item.tags) ? item.tags.join(' ').toLowerCase() : '';
+      return w.includes(vocabSearchQuery) || vi.includes(vocabSearchQuery) || en.includes(vocabSearchQuery) || ctx.includes(vocabSearchQuery) || tagsStr.includes(vocabSearchQuery);
+    });
+  }
+
+  // 2. Mastery Filter
+  if (vocabMasteryFilter !== 'all') {
+    filtered = filtered.filter(item => {
+      const rep = item.repetition || 0;
+      if (vocabMasteryFilter === '0') return rep === 0;
+      if (vocabMasteryFilter === '1') return rep === 1;
+      if (vocabMasteryFilter === '2') return rep === 2;
+      if (vocabMasteryFilter === '3') return rep === 3;
+      if (vocabMasteryFilter === '4+') return rep >= 4;
+      return true;
+    });
+  }
+
+  // 3. POS Filter
+  if (vocabPosFilter !== 'all') {
+    filtered = filtered.filter(item => {
+      const pos = String(item.partOfSpeech || '').toLowerCase();
+      if (vocabPosFilter === 'other') {
+        return !['noun', 'verb', 'adjective', 'adverb'].includes(pos);
+      }
+      return pos === vocabPosFilter;
+    });
+  }
+
+  // 4. Tag Filter
+  if (vocabTagFilter !== 'all') {
+    filtered = filtered.filter(item => {
+      return Array.isArray(item.tags) && item.tags.includes(vocabTagFilter);
+    });
+  }
+
+  // 4. Sort
+  filtered.sort((a, b) => {
+    switch (vocabSortBy) {
+      case 'date-asc': return (a.dateAdded || 0) - (b.dateAdded || 0);
+      case 'alpha-asc': return String(a.word || '').localeCompare(String(b.word || ''));
+      case 'alpha-desc': return String(b.word || '').localeCompare(String(a.word || ''));
+      case 'review-asc': return (a.nextReviewDate || 0) - (b.nextReviewDate || 0);
+      case 'mastery-desc': return (b.repetition || 0) - (a.repetition || 0);
+      case 'date-desc':
+      default: return (b.dateAdded || 0) - (a.dateAdded || 0);
+    }
+  });
+
+  // Update subtitle
+  const statsSub = document.getElementById('vocab-stats-sub');
+  if (statsSub) {
+    const dueCount = fullVocabList.filter(item => !item.nextReviewDate || item.nextReviewDate <= Date.now()).length;
+    if (filtered.length !== fullVocabList.length) {
+      statsSub.textContent = `Showing ${filtered.length} of ${fullVocabList.length} words (${dueCount} due today)`;
+    } else {
+      statsSub.textContent = `${fullVocabList.length} words collected (${dueCount} due for review today)`;
+    }
+  }
+
   if (fullVocabList.length === 0) {
     emptyState.classList.remove('hidden');
     vocabTable.classList.add('hidden');
+    const emptyTitle = document.getElementById('empty-title');
+    const emptyDesc = document.getElementById('empty-desc');
+    if (emptyTitle) emptyTitle.textContent = "No words yet!";
+    if (emptyDesc) emptyDesc.textContent = "Select any English word on a website to start building your vocabulary.";
+    return;
+  }
+
+  if (filtered.length === 0) {
+    emptyState.classList.remove('hidden');
+    vocabTable.classList.add('hidden');
+    const emptyTitle = document.getElementById('empty-title');
+    const emptyDesc = document.getElementById('empty-desc');
+    if (emptyTitle) emptyTitle.textContent = "No matching words found";
+    if (emptyDesc) emptyDesc.textContent = "Try changing your search terms or resetting the filters.";
     return;
   }
 
   emptyState.classList.add('hidden');
   vocabTable.classList.remove('hidden');
 
-  // Sort newest first
-  const sorted = [...fullVocabList].sort((a, b) => b.dateAdded - a.dateAdded);
+  const sorted = filtered;
 
   sorted.forEach(item => {
     const tr = document.createElement('tr');
@@ -410,9 +603,17 @@ function renderVocabTable() {
 
     const masteryHtml = `<span class="mastery-badge ${masteryClass}">${masteryLabel}</span>`;
 
+    const tags = Array.isArray(item.tags) ? item.tags : [];
+    const tagsHtml = tags.length > 0
+      ? `<div class="word-tags-row">${tags.map(t => `<span class="tag-pill">#${escapeHtml(t)}</span>`).join('')}</div>`
+      : '';
+
     tr.innerHTML = `
       <td class="col-check"><input type="checkbox" class="row-cb" data-id="${escapeHtml(item.id)}"></td>
-      <td><a href="#" class="vocab-word-link" data-id="${escapeHtml(item.id)}"><strong>${escapeHtml(item.word)}</strong></a>${posBadgeHtml}</td>
+      <td>
+        <a href="#" class="vocab-word-link" data-id="${escapeHtml(item.id)}"><strong>${escapeHtml(item.word)}</strong></a>${posBadgeHtml}
+        ${tagsHtml}
+      </td>
       <td class="en-meaning-cell" title="${enMeaning}">${enMeaning}</td>
       <td class="vi-cell">${viTranslation}</td>
       <td class="context-cell">
@@ -422,6 +623,7 @@ function renderVocabTable() {
       <td>${masteryHtml}</td>
       <td>${nextReviewHtml}</td>
       <td>
+        <button class="btn sm outline tag-edit-btn" data-id="${escapeHtml(item.id)}" title="Manage tags">🏷 Tag</button>
         <button class="btn sm outline youglish-btn" data-word="${escapeHtml(item.word)}" title="Open this word on YouGlish">YouGlish</button>
         <button class="btn sm danger delete-btn" data-id="${escapeHtml(item.id)}">🗑 Delete</button>
       </td>
@@ -434,6 +636,11 @@ function renderVocabTable() {
   });
   document.querySelectorAll('.edit-ctx-btn').forEach(btn => {
     btn.addEventListener('click', openContextModal);
+  });
+  document.querySelectorAll('.tag-edit-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      openTagModal(e.currentTarget.getAttribute('data-id'));
+    });
   });
   document.querySelectorAll('.youglish-btn').forEach(btn => {
     btn.addEventListener('click', openYouGlish);
@@ -454,8 +661,7 @@ function deleteWord(e) {
   const id = e.target.getAttribute('data-id');
   if (confirm('Delete this word from your vocabulary?')) {
     // BUG FIX: convert both sides to string to avoid number/string mismatch
-    fullVocabList = fullVocabList.filter(w => String(w.id) !== id);
-    chrome.storage.local.set({ vocabList: fullVocabList }, () => {
+    updateStoredVocabList(list => list.filter(w => String(w.id) !== id)).then(() => {
       loadData();
     });
   }
@@ -527,8 +733,7 @@ function saveContext() {
   const newContext = document.getElementById('ctx-textarea').value.trim();
   const idx = fullVocabList.findIndex(w => String(w.id) === editingWordId);
   if (idx !== -1) {
-    fullVocabList[idx].context = newContext;
-    chrome.storage.local.set({ vocabList: fullVocabList }, () => {
+    persistVocabularyWord(fullVocabList[idx], { context: newContext }).then(() => {
       closeContextModal();
       renderVocabTable();
     });
@@ -550,10 +755,13 @@ function updateBadge() {
 
 function prepareReviewSession() {
   const now = new Date().getTime();
-  // BUG FIX: include words with missing nextReviewDate
-  dueWords = fullVocabList.filter(item => !item.nextReviewDate || item.nextReviewDate <= now);
+  let pool = fullVocabList.filter(item => !item.nextReviewDate || item.nextReviewDate <= now);
 
-  // Shuffle
+  if (reviewGateTagFilter !== 'all') {
+    pool = pool.filter(item => Array.isArray(item.tags) && item.tags.includes(reviewGateTagFilter));
+  }
+
+  dueWords = pool;
   dueWords.sort(() => Math.random() - 0.5);
 
   updateBadge();
@@ -562,6 +770,7 @@ function prepareReviewSession() {
 function showReviewGate() {
   prepareReviewSession();
   stopReviewGateTimer();
+  stopReviewSessionTimer();
   currentReviewIndex = 0;
   sessionTotal = dueWords.length;
   updateProgressRing(0, sessionTotal);
@@ -570,6 +779,7 @@ function showReviewGate() {
   document.getElementById('review-container').classList.add('hidden');
   document.getElementById('review-summary-panel').classList.add('hidden');
   document.getElementById('review-complete').classList.add('hidden');
+  document.getElementById('review-session-bar').classList.add('hidden');
   document.querySelectorAll('.question-block').forEach(el => el.classList.add('hidden'));
 
   renderReviewGate();
@@ -578,7 +788,11 @@ function showReviewGate() {
 
 function renderReviewGate() {
   const now = Date.now();
-  const dueCount = fullVocabList.filter(item => !item.nextReviewDate || item.nextReviewDate <= now).length;
+  let pool = fullVocabList.filter(item => !item.nextReviewDate || item.nextReviewDate <= now);
+  if (reviewGateTagFilter !== 'all') {
+    pool = pool.filter(item => Array.isArray(item.tags) && item.tags.includes(reviewGateTagFilter));
+  }
+  const dueCount = pool.length;
   const futureReviews = fullVocabList
     .filter(item => item.nextReviewDate && item.nextReviewDate > now)
     .sort((a, b) => a.nextReviewDate - b.nextReviewDate);
@@ -595,7 +809,7 @@ function renderReviewGate() {
   startBtn.disabled = dueCount === 0;
 
   if (dueCount !== dueWords.length) {
-    dueWords = fullVocabList.filter(item => !item.nextReviewDate || item.nextReviewDate <= now);
+    dueWords = pool;
     updateBadge();
   }
 
@@ -677,6 +891,119 @@ function pulseReviewGate() {
   document.getElementById('gate-play-message').textContent = 'Focus pulse armed. Take a breath, then start when ready.';
 }
 
+function resetReviewSessionMetrics() {
+  reviewSession.startedAt = Date.now();
+  reviewSession.answered = 0;
+  reviewSession.correct = 0;
+  reviewSession.mistakes.clear();
+  reviewSession.lastOutcome = null;
+  const bar = document.getElementById('review-session-bar');
+  bar?.classList.remove('hidden');
+  startReviewSessionTimer();
+  updateReviewSessionBar();
+}
+
+function startReviewSessionTimer() {
+  stopReviewSessionTimer();
+  reviewSessionTimer = setInterval(updateReviewSessionBar, 1000);
+}
+
+function stopReviewSessionTimer() {
+  if (reviewSessionTimer) {
+    clearInterval(reviewSessionTimer);
+    reviewSessionTimer = null;
+  }
+}
+
+function formatSessionDuration(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function updateReviewSessionBar() {
+  const answeredEl = document.getElementById('session-answered');
+  const accuracyEl = document.getElementById('session-accuracy');
+  const timeEl = document.getElementById('session-time');
+  const focusEl = document.getElementById('session-focus');
+  const total = Math.max(sessionTotal, reviewSession.answered);
+  if (answeredEl) answeredEl.textContent = `${reviewSession.answered}/${total}`;
+  if (accuracyEl) accuracyEl.textContent = reviewSession.answered
+    ? `${Math.round((reviewSession.correct / reviewSession.answered) * 100)}%`
+    : '—';
+  if (timeEl) timeEl.textContent = formatSessionDuration(Date.now() - reviewSession.startedAt);
+  if (focusEl) {
+    focusEl.textContent = reviewSession.mistakes.size
+      ? `${reviewSession.mistakes.size} to revisit`
+      : (reviewSession.answered ? 'On track' : 'New session');
+  }
+}
+
+function recordCurrentSessionOutcome(isCorrect) {
+  if (sessionOutcomeRecordedForCurrent || !currentWord) return;
+  sessionOutcomeRecordedForCurrent = true;
+  reviewSession.answered++;
+  if (isCorrect) {
+    reviewSession.correct++;
+    reviewSession.mistakes.delete(String(currentWord.id));
+  } else {
+    reviewSession.mistakes.set(String(currentWord.id), currentWord);
+  }
+  reviewSession.lastOutcome = { isCorrect, word: currentWord.word };
+  updateReviewSessionBar();
+}
+
+function renderReviewComplete() {
+  stopReviewSessionTimer();
+  updateReviewSessionBar();
+  document.getElementById('review-session-bar')?.classList.toggle('hidden', reviewSession.answered === 0);
+  const completeMessage = document.getElementById('review-complete-message');
+  const statsEl = document.getElementById('review-complete-stats');
+  const retryBtn = document.getElementById('retry-mistakes-btn');
+  const hasAnswers = reviewSession.answered > 0;
+  const accuracy = reviewSession.answered
+    ? Math.round((reviewSession.correct / reviewSession.answered) * 100)
+    : 0;
+
+  if (hasAnswers) {
+    addGamificationXP(30, 'Completed review session');
+  }
+
+  if (completeMessage) {
+    completeMessage.textContent = hasAnswers
+      ? (reviewSession.mistakes.size ? 'Nice work. Finish with a short error-correction round to lock in the difficult words.' : 'Clean session. Your recall was consistent today.')
+      : 'You have no words due right now. Add words or return when the next review opens.';
+  }
+  if (statsEl) {
+    statsEl.classList.toggle('hidden', !hasAnswers);
+    statsEl.innerHTML = hasAnswers
+      ? `<span><strong>${reviewSession.answered}</strong> reviewed</span><span><strong>${accuracy}%</strong> accuracy</span><span><strong>${formatSessionDuration(Date.now() - reviewSession.startedAt)}</strong> focused</span>`
+      : '';
+  }
+  if (retryBtn) retryBtn.classList.toggle('hidden', reviewSession.mistakes.size === 0);
+}
+
+function startMistakeReview() {
+  const mistakes = [...reviewSession.mistakes.values()];
+  if (!mistakes.length) return;
+  dueWords = mistakes;
+  currentReviewIndex = 0;
+  sessionTotal = dueWords.length;
+  sessionOutcomeRecordedForCurrent = false;
+  document.getElementById('review-complete').classList.add('hidden');
+  resetReviewSessionMetrics();
+  renderNextQuestion();
+}
+
+function handleReviewShortcuts(event) {
+  if (!document.getElementById('review-view')?.classList.contains('active')) return;
+  if (event.target.matches('input, textarea, select, button')) return;
+  if (/^[1-4]$/.test(event.key)) {
+    const options = [...document.querySelectorAll('.question-block:not(.hidden) .mcq-btn:not(:disabled)')];
+    const option = options[Number(event.key) - 1];
+    if (option) option.click();
+  }
+}
+
 function startReview(usePreparedQueue = false) {
   if (!usePreparedQueue) {
     prepareReviewSession();
@@ -684,6 +1011,7 @@ function startReview(usePreparedQueue = false) {
   currentReviewIndex = 0;
   sessionTotal = dueWords.length;
   stopReviewGateTimer();
+  resetReviewSessionMetrics();
 
   updateProgressRing(0, sessionTotal);
   document.getElementById('review-gate').classList.add('hidden');
@@ -692,6 +1020,7 @@ function startReview(usePreparedQueue = false) {
     document.getElementById('review-container').classList.add('hidden');
     document.getElementById('review-complete').classList.remove('hidden');
     document.getElementById('review-progress').textContent = '0 left today';
+    renderReviewComplete();
     return;
   }
 
@@ -706,13 +1035,17 @@ function renderNextQuestion() {
     document.getElementById('review-complete').classList.remove('hidden');
     document.getElementById('review-gate').classList.add('hidden');
     updateProgressRing(sessionTotal, sessionTotal);
+    renderReviewComplete();
     return;
   }
 
   document.getElementById('review-container').classList.remove('hidden');
   document.getElementById('review-gate').classList.add('hidden');
+  questionStartTime = Date.now();
+  sessionOutcomeRecordedForCurrent = false;
 
   currentWord = dueWords[currentReviewIndex];
+  preloadUpcomingReviewImages(currentReviewIndex + 1);
   const remaining = dueWords.length - currentReviewIndex;
   document.getElementById('review-progress').textContent =
     `${remaining} word${remaining !== 1 ? 's' : ''} left today`;
@@ -732,9 +1065,17 @@ function renderNextQuestion() {
     }
   }
   else if (rep === 2 && fullVocabList.length >= 4) type = 'match';
-  else if (rep === 3 && hasCollocations(currentWord)) type = 'collocation';
-  else if (rep === 3 && ((currentWord.synonyms && currentWord.synonyms.length > 0) || (currentWord.antonyms && currentWord.antonyms.length > 0))) type = 'synonym';
-  else if (rep >= 4) type = hasCollocations(currentWord) && Math.random() > 0.5 ? 'collocation' : 'sentence';
+  else if (rep === 3) {
+    if (Math.random() > 0.4) type = 'typing';
+    else if (hasCollocations(currentWord)) type = 'collocation';
+    else if (hasSynonymsOrAntonyms(currentWord)) type = 'synonym';
+  }
+  else if (rep >= 4) {
+    const roll = Math.random();
+    if (roll < 0.4) type = 'typing';
+    else if (roll < 0.7 && hasCollocations(currentWord)) type = 'collocation';
+    else type = 'sentence';
+  }
 
   switch (type) {
     case 'mcq': renderMCQ(); break;
@@ -743,7 +1084,18 @@ function renderNextQuestion() {
     case 'synonym': renderSynonym(); break;
     case 'collocation': renderCollocation(); break;
     case 'sentence': renderSentence(); break;
+    case 'typing': renderTypingQuestion(); break;
   }
+}
+
+function preloadUpcomingReviewImages(startIndex) {
+  dueWords.slice(startIndex, startIndex + 3)
+    .filter(hasRealVocabularyImage)
+    .forEach(wordObj => {
+      const preload = new Image();
+      preload.decoding = 'async';
+      preload.src = wordObj.imageUrl;
+    });
 }
 
 // ── Question Renderers ────────────────────────────────────────
@@ -801,11 +1153,11 @@ function renderPicture() {
   const img = document.getElementById('qt-picture-img');
   img.onerror = () => {
     img.onerror = null;
-    currentWord.imageUrl = '';
-    persistVocabularyWord(currentWord);
+    persistVocabularyWord(currentWord, { imageUrl: '' });
     document.getElementById('qt-picture').classList.add('hidden');
     renderMCQ();
   };
+  img.decoding = 'async';
   img.src = currentWord.imageUrl;
 
   const container = document.getElementById('qt-picture-options');
@@ -866,6 +1218,11 @@ function renderSynonym() {
     btn.onclick = () => handleAnswer(opt === correctAns, btn, '#qt-synonym-options .mcq-btn', correctAns);
     container.appendChild(btn);
   });
+}
+
+function hasSynonymsOrAntonyms(wordObj) {
+  return (Array.isArray(wordObj.synonyms) && wordObj.synonyms.length > 0)
+    || (Array.isArray(wordObj.antonyms) && wordObj.antonyms.length > 0);
 }
 
 function hasCollocations(wordObj) {
@@ -1013,10 +1370,16 @@ function onMatchClick(el, type, val) {
 
       const wObj = pair.wordObj;
       if (!matchFailedWords.has(wObj.id)) {
-        updateSM2(wObj, 4);
-        if (wObj.id !== currentWord.id) {
+        if (wObj.id === currentWord.id) {
+          updateSM2(wObj, 4);
+          recordCurrentSessionOutcome(true);
+          recordReviewResult(true);
+        } else {
+          // The other cards are only distractors. A match counts as a review just
+          // for words still waiting in this session; everything else keeps its schedule.
           const dueIdx = dueWords.findIndex(w => w.id === wObj.id);
           if (dueIdx > currentReviewIndex) {
+            updateSM2(wObj, 4);
             dueWords.splice(dueIdx, 1);
             sessionTotal--;
             updateProgressRing(currentReviewIndex, sessionTotal);
@@ -1047,10 +1410,16 @@ function onMatchClick(el, type, val) {
 
       if (isCurrentWordInvolved) {
         updateSM2(currentWord, 0);
+        recordCurrentSessionOutcome(false);
+        recordReviewResult(false);
         setTimeout(() => showSummaryPanel(), 1000);
       } else {
-        if (wordObjWord) updateSM2(wordObjWord, 0);
-        if (wordObjDef) updateSM2(wordObjDef, 0);
+        // Same rule for mistakes: only words still waiting in this session are penalised.
+        [wordObjWord, wordObjDef].forEach(wObj => {
+          if (wObj && dueWords.findIndex(w => w.id === wObj.id) > currentReviewIndex) {
+            updateSM2(wObj, 0);
+          }
+        });
       }
     }
     matchSelectedWord = null;
@@ -1093,6 +1462,8 @@ function renderSentence() {
         msgEl.textContent = response.result.feedback || (isCorrect ? 'Great sentence!' : 'That doesn\'t seem right.');
 
         updateSM2(currentWord, isCorrect ? 4 : 0);
+        recordCurrentSessionOutcome(isCorrect);
+        recordReviewResult(isCorrect);
         setTimeout(() => showSummaryPanel(), 3500);
       } else {
         feedbackEl.classList.add('wrong');
@@ -1106,6 +1477,16 @@ function renderSentence() {
 }
 
 // ── Answer Handler ────────────────────────────────────────────
+
+function calculateAnswerQuality(isCorrect) {
+  if (!isCorrect) return 0;
+  const elapsedMs = Date.now() - (questionStartTime || Date.now());
+  const elapsedSec = elapsedMs / 1000;
+  // Fast correct = 5, moderate = 4, slow but correct = 3
+  if (elapsedSec < 3) return 5;
+  if (elapsedSec < 8) return 4;
+  return 3;
+}
 
 function handleAnswer(isCorrect, btnElement, allBtnsSelector, correctText) {
   const allBtns = document.querySelectorAll(allBtnsSelector);
@@ -1123,8 +1504,10 @@ function handleAnswer(isCorrect, btnElement, allBtnsSelector, correctText) {
     });
   }
 
-  const quality = isCorrect ? 4 : 0;
+  const quality = calculateAnswerQuality(isCorrect);
   updateSM2(currentWord, quality);
+  recordCurrentSessionOutcome(isCorrect);
+  recordReviewResult(isCorrect);
 
   setTimeout(() => {
     showSummaryPanel();
@@ -1140,6 +1523,15 @@ async function showSummaryPanel() {
   panel.classList.remove('hidden');
 
   document.getElementById('next-question-btn').classList.remove('hidden');
+  const outcome = document.getElementById('summary-outcome');
+  if (outcome && reviewSession.lastOutcome?.word === currentWord?.word) {
+    outcome.textContent = reviewSession.lastOutcome.isCorrect
+      ? 'Correct — keep the recall strong with the example below.'
+      : 'Not quite — take a moment to connect the word, meaning, and example.';
+    outcome.className = `summary-outcome ${reviewSession.lastOutcome.isCorrect ? 'correct' : 'wrong'}`;
+  } else if (outcome) {
+    outcome.className = 'summary-outcome hidden';
+  }
   const backBtn = document.getElementById('back-to-list-btn');
   if (backBtn) backBtn.classList.add('hidden');
 
@@ -1160,6 +1552,7 @@ async function showWordDetails(wordId) {
   currentWord = wordObj;
   const panel = document.getElementById('review-summary-panel');
   panel.classList.remove('hidden');
+  document.getElementById('summary-outcome')?.classList.add('hidden');
 
   let backBtn = document.getElementById('back-to-list-btn');
   if (!backBtn) {
@@ -1179,33 +1572,29 @@ async function showWordDetails(wordId) {
   await populateSummaryPanel(wordObj);
 }
 
-async function populateSummaryPanel(wordObj) {
+function populateSummaryPanel(wordObj) {
   document.getElementById('summary-word').textContent = wordObj.word;
   document.getElementById('summary-meaning').textContent = wordObj.englishMeaning || '—';
   document.getElementById('summary-translation').textContent = wordObj.translation || '—';
   document.getElementById('summary-example').textContent = wordObj.context || '—';
   renderSummaryCollocations(wordObj);
 
-  const imgEl = document.getElementById('summary-image');
-  const imgPlaceholder = document.getElementById('summary-image-placeholder');
-  imgEl.classList.add('hidden');
-  imgPlaceholder.classList.remove('hidden');
-  imgPlaceholder.textContent = 'Loading image...';
-  imgEl.onerror = () => {
-    imgEl.onerror = null;
-    wordObj.imageUrl = '';
-    persistVocabularyWord(wordObj);
-    imgEl.classList.add('hidden');
-    imgPlaceholder.classList.remove('hidden');
-    imgPlaceholder.textContent = 'No image available';
-  };
+  renderSummaryImage(wordObj);
 
-  // Fetch missing media whenever imageUrl, pronunciation, or collocations are absent.
+  // Enrichment must never block the detail panel. Each task updates its own
+  // part of the panel as soon as it completes.
   if (!wordObj.imageUrl || !wordObj.pronunciation || !hasCollocations(wordObj)) {
-    await fetchMissingMedia(wordObj);
-    renderSummaryCollocations(wordObj);
+    void fetchMissingMedia(wordObj).then(() => {
+      if (String(currentWord?.id) !== String(wordObj.id)) return;
+      renderSummaryCollocations(wordObj);
+      updateSummaryIpa(wordObj);
+    });
   }
 
+  updateSummaryIpa(wordObj);
+}
+
+function updateSummaryIpa(wordObj) {
   const ipaEl = document.getElementById('summary-ipa');
   if (wordObj.pronunciation) {
     ipaEl.textContent = wordObj.pronunciation;
@@ -1213,11 +1602,31 @@ async function populateSummaryPanel(wordObj) {
   } else {
     ipaEl.classList.add('hidden');
   }
+}
+
+function renderSummaryImage(wordObj) {
+  const imgEl = document.getElementById('summary-image');
+  const imgPlaceholder = document.getElementById('summary-image-placeholder');
+  if (!imgEl || !imgPlaceholder) return;
 
   if (hasRealVocabularyImage(wordObj)) {
+    imgEl.classList.add('hidden');
+    imgPlaceholder.classList.remove('hidden');
+    imgPlaceholder.textContent = 'Loading image…';
+    imgEl.decoding = 'async';
+    imgEl.onload = () => {
+      if (String(currentWord?.id) !== String(wordObj.id)) return;
+      imgEl.classList.remove('hidden');
+      imgPlaceholder.classList.add('hidden');
+    };
+    imgEl.onerror = () => {
+      if (String(currentWord?.id) !== String(wordObj.id)) return;
+      persistVocabularyWord(wordObj, { imageUrl: '' });
+      imgEl.classList.add('hidden');
+      imgPlaceholder.classList.remove('hidden');
+      imgPlaceholder.textContent = 'No image available';
+    };
     imgEl.src = wordObj.imageUrl;
-    imgEl.classList.remove('hidden');
-    imgPlaceholder.classList.add('hidden');
   } else {
     imgEl.classList.add('hidden');
     imgPlaceholder.classList.remove('hidden');
@@ -1226,7 +1635,19 @@ async function populateSummaryPanel(wordObj) {
 }
 
 async function fetchMissingMedia(wordObj) {
-  let updated = false;
+  // Save only the fields this lookup fills in, so it can't overwrite
+  // anything else that changed on the word while the requests were running.
+  const changes = {};
+  const imageTask = !hasRealVocabularyImage(wordObj)
+    ? fetchVocabularyImage(wordObj).then(imageUrl => {
+        if (!imageUrl || imageUrl === wordObj.imageUrl) return false;
+        persistVocabularyWord(wordObj, { imageUrl });
+        if (String(currentWord?.id) === String(wordObj.id)) {
+          renderSummaryImage(wordObj);
+        }
+        return true;
+      })
+    : Promise.resolve(false);
 
   if (!wordObj.pronunciation && !wordObj.audioUrl) {
     try {
@@ -1236,9 +1657,8 @@ async function fetchMissingMedia(wordObj) {
         const phonetics = dictData[0]?.phonetics || [];
         const validPhonetic = phonetics.find(p => p.text && p.audio) || phonetics.find(p => p.text) || phonetics[0];
         if (validPhonetic) {
-          wordObj.pronunciation = validPhonetic.text || '';
-          wordObj.audioUrl = validPhonetic.audio || '';
-          updated = true;
+          changes.pronunciation = validPhonetic.text || '';
+          changes.audioUrl = validPhonetic.audio || '';
         }
 
         let dictExample = '';
@@ -1257,26 +1677,18 @@ async function fetchMissingMedia(wordObj) {
             }
           }
         }
-        wordObj.synonyms = [...new Set(synonyms)].slice(0, 5);
-        wordObj.antonyms = [...new Set(antonyms)].slice(0, 5);
+        changes.synonyms = [...new Set(synonyms)].slice(0, 5);
+        changes.antonyms = [...new Set(antonyms)].slice(0, 5);
 
         if (dictExample) {
-          wordObj.context = dictExample; // Upgrade messy context to clean dictionary example
-          updated = true;
+          changes.context = dictExample; // Upgrade messy context to clean dictionary example
           // Dynamically update the summary panel if it's currently showing
           const exampleEl = document.getElementById('summary-example');
           if (exampleEl) exampleEl.textContent = dictExample;
         }
       }
     } catch (e) { console.warn("Dict API error:", e); }
-  }
-
-  if (!hasRealVocabularyImage(wordObj)) {
-    const imageUrl = await fetchVocabularyImage(wordObj);
-    if (imageUrl && imageUrl !== wordObj.imageUrl) {
-      wordObj.imageUrl = imageUrl;
-      updated = true;
-    }
+    Object.assign(wordObj, changes);
   }
 
   if (!hasCollocations(wordObj)) {
@@ -1288,7 +1700,7 @@ async function fetchMissingMedia(wordObj) {
       });
       if (response?.success && Array.isArray(response.collocations)) {
         wordObj.collocations = response.collocations;
-        updated = true;
+        changes.collocations = response.collocations;
       }
     } catch (e) {
       console.warn("Collocation fetch error:", e);
@@ -1299,11 +1711,33 @@ async function fetchMissingMedia(wordObj) {
   if (wordObj.audioUrl === undefined) wordObj.audioUrl = '';
   if (isGeneratedVocabularyImage(wordObj.imageUrl)) {
     wordObj.imageUrl = '';
-    updated = true;
+    changes.imageUrl = '';
   }
 
-  if (updated) {
-    persistVocabularyWord(wordObj);
+  // A real image found above has already been saved; don't clear it again.
+  if (await imageTask) delete changes.imageUrl;
+
+  if (Object.keys(changes).length > 0) {
+    persistVocabularyWord(wordObj, changes);
+  }
+}
+
+async function requestVocabularyImage(wordObj) {
+  try {
+    const response = await sendRuntimeMessage({
+      action: 'fetchVocabularyImage',
+      vocab: {
+        word: wordObj.word,
+        originalWord: wordObj.originalWord,
+        englishMeaning: wordObj.englishMeaning,
+        context: wordObj.context,
+        partOfSpeech: wordObj.partOfSpeech
+      }
+    });
+    return response?.success ? response.imageUrl : '';
+  } catch (error) {
+    console.warn('Vocabulary image request failed:', error);
+    return '';
   }
 }
 
@@ -1360,7 +1794,7 @@ async function showCollocationContext(wordObj, collocationIndex) {
     collocation.context = response.context;
     const original = (wordObj.collocations || []).find(item => item.phrase === collocation.phrase);
     if (original) original.context = response.context;
-    persistVocabularyWord(wordObj);
+    persistVocabularyWord(wordObj, { collocations: wordObj.collocations });
     renderCollocationContext(contextEl, collocation);
   } else {
     contextEl.innerHTML = `
@@ -1389,65 +1823,72 @@ function renderCollocationContext(container, collocation) {
   `;
 }
 
-function getVocabularyImageQueries(wordObj) {
-  const word = String(wordObj.word || '').trim();
-  const originalWord = String(wordObj.originalWord || '').trim();
-  const stopWords = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'used', 'use', 'person', 'thing', 'someone', 'something']);
-  const candidates = [
-    word,
-    originalWord,
-    `${word} illustration`,
-    `${word} concept`,
-    `${word} object`
-  ];
-  const sourceText = `${wordObj.englishMeaning || ''} ${wordObj.context || ''}`.toLowerCase();
-  const keywords = sourceText
-    .match(/[a-z][a-z'-]{3,}/g)
-    ?.filter(item => !stopWords.has(item) && item !== word)
-    .slice(0, 4) || [];
-  if (keywords.length > 0) candidates.push(`${word} ${keywords.join(' ')}`);
-  return [...new Set(candidates.map(item => String(item || '').trim()).filter(Boolean))].slice(0, 6);
-}
-
+// Image fetching is delegated to background.js to avoid duplicating API logic
+// and to keep API keys centralized in the service worker.
 async function fetchVocabularyImage(wordObj) {
-  const queries = getVocabularyImageQueries(wordObj);
-  for (const query of queries) {
-    const illustration = await fetchPixabayImage(query, 'illustration');
-    if (illustration) return illustration;
-  }
-  for (const query of queries) {
-    const photo = await fetchPixabayImage(query, 'photo');
-    if (photo) return photo;
-  }
-  return '';
-}
-
-async function fetchPixabayImage(query, imageType = 'photo') {
   try {
-    const pixabayKey = '55815075-819f9a7ac5a51a635908a4d54';
-    const params = new URLSearchParams({
-      key: pixabayKey,
-      q: query || 'study reading',
-      image_type: imageType,
-      safesearch: 'true',
-      per_page: '3'
+    const response = await sendRuntimeMessage({
+      action: 'fetchVocabularyImage',
+      vocab: {
+        word: wordObj.word,
+        originalWord: wordObj.originalWord,
+        englishMeaning: wordObj.englishMeaning,
+        context: wordObj.context,
+        partOfSpeech: wordObj.partOfSpeech
+      }
     });
-    const pixabayRes = await fetch(`https://pixabay.com/api/?${params.toString()}`);
-    if (!pixabayRes.ok) return '';
-    const pixData = await pixabayRes.json();
-    return pixData.hits?.[0]?.webformatURL || '';
-  } catch (e) {
-    console.warn("Pixabay API error:", e);
+    return response?.success ? response.imageUrl : '';
+  } catch (error) {
+    console.warn('Vocabulary image fetch failed:', error);
     return '';
   }
 }
 
-function persistVocabularyWord(wordObj) {
-  const idx = fullVocabList.findIndex(w => w.id === wordObj.id);
-  if (idx !== -1) {
-    fullVocabList[idx] = wordObj;
-    chrome.storage.local.set({ vocabList: fullVocabList });
-  }
+// Every vocabulary write starts from the latest stored list. Writing this
+// page's fullVocabList back erased words saved from other tabs while the
+// dashboard was open. Writes are queued so quick updates from this page
+// (several matches in one Matching Game, say) can't overwrite each other.
+let vocabWriteQueue = Promise.resolve();
+
+function updateStoredVocabList(applyChanges) {
+  const write = vocabWriteQueue.then(async () => {
+    const data = await chrome.storage.local.get({ vocabList: [] });
+    const latestList = Array.isArray(data.vocabList) ? data.vocabList : [];
+    const nextList = applyChanges(latestList);
+    if (!nextList) return;
+    await chrome.storage.local.set({ vocabList: nextList });
+    syncVocabList(nextList);
+  });
+  vocabWriteQueue = write.catch(error => console.warn('Vocabulary save failed:', error));
+  return vocabWriteQueue;
+}
+
+// Saves the given fields on one word and mirrors them on the in-memory object.
+function persistVocabularyWord(wordObj, changes) {
+  Object.assign(wordObj, changes);
+  return updateStoredVocabList(list => {
+    const storedWord = list.find(w => String(w.id) === String(wordObj.id));
+    // Deleted in another tab: don't bring it back.
+    if (!storedWord) return null;
+    Object.assign(storedWord, changes);
+    return list;
+  });
+}
+
+// Keeps fullVocabList in step with storage. Existing objects are updated in
+// place because the review queue and the current question hold references to them.
+function syncVocabList(latestList) {
+  const existingById = new Map(fullVocabList.map(w => [String(w.id), w]));
+  const idsChanged = latestList.length !== fullVocabList.length
+    || latestList.some(w => !existingById.has(String(w.id)));
+
+  fullVocabList = latestList.map(latestWord => {
+    const existing = existingById.get(String(latestWord.id));
+    return existing ? Object.assign(existing, latestWord) : latestWord;
+  });
+
+  updateBadge();
+  if (idsChanged) renderVocabTable();
 }
 
 function sendRuntimeMessage(message) {
@@ -1463,39 +1904,68 @@ function handleNextQuestionBtn() {
 }
 
 function playSummaryAudio() {
-  if (currentWord && currentWord.audioUrl) {
-    const audio = new Audio(currentWord.audioUrl);
-    audio.play().catch(e => console.error("Audio play error", e));
-  } else if (currentWord && currentWord.word) {
-    const utterance = new SpeechSynthesisUtterance(currentWord.word);
-    utterance.lang = 'en-US';
-    speechSynthesis.speak(utterance);
+  if (currentWord && currentWord.word) {
+    const toggleBtn = document.getElementById('summary-accent-toggle');
+    const accent = toggleBtn ? toggleBtn.textContent : 'US';
+    speakReviewWord(currentWord.word, accent);
   }
 }
 
+function speakReviewWord(word, accent = 'US') {
+  const text = String(word || '').trim();
+  if (!text) return;
+  const lang = accent === 'UK' ? 'en-GB' : 'en-US';
+  const audioBtn = document.getElementById('summary-audio-btn');
+  if (audioBtn) audioBtn.style.transform = 'scale(1.2)';
+  chrome.runtime.sendMessage({ action: 'speakText', text, lang }, () => {
+    if (audioBtn) audioBtn.style.transform = 'scale(1)';
+  });
+}
+
 // ── SM-2 Algorithm ────────────────────────────────────────────
+// Full SM-2 implementation with adaptive ease factor.
+// quality: 0 = wrong/blackout, 1-2 = wrong with partial recall,
+//          3 = correct but hard, 4 = correct, 5 = perfect/instant
 
 function updateSM2(wordObj, quality) {
-  const intervals = [0, 20 / (24 * 60), 1, 3, 7, 14];
+  let repetition = wordObj.repetition || 0;
+  let easeFactor = wordObj.easeFactor || 2.5;
+  let interval = wordObj.interval || 0;
 
   if (quality >= 3) {
-    // BUG FIX: guard against undefined repetition (NaN)
-    wordObj.repetition = (wordObj.repetition || 0) + 1;
-    wordObj.interval = wordObj.repetition >= intervals.length
-      ? 14
-      : intervals[wordObj.repetition];
+    // Correct answer: advance through the schedule
+    if (repetition === 0) {
+      interval = 20 / (24 * 60); // First correct: review in 20 minutes
+    } else if (repetition === 1) {
+      interval = 1; // Second correct: review in 1 day
+    } else {
+      // From rep 2+: use the adaptive ease factor. Keep at least one day so a
+      // word imported without an interval doesn't stay due forever.
+      interval = Math.max(1, Math.round(interval * easeFactor));
+    }
+    repetition++;
   } else {
-    wordObj.repetition = 0;
-    wordObj.interval = 20 / (24 * 60); // wrong: review again in 20 minutes
+    // Wrong answer: reset to short interval
+    repetition = 0;
+    interval = 20 / (24 * 60); // Review again in 20 minutes
   }
 
-  const now = new Date().getTime();
-  wordObj.nextReviewDate = now + wordObj.interval * 24 * 60 * 60 * 1000;
+  // Update ease factor based on answer quality (core SM-2 formula)
+  // This makes the algorithm ADAPTIVE: easy words get longer intervals,
+  // hard words get shorter intervals over time.
+  easeFactor = easeFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
+  easeFactor = Math.max(1.3, easeFactor); // Floor at 1.3 per SM-2 spec
 
-  const idx = fullVocabList.findIndex(w => w.id === wordObj.id);
-  if (idx !== -1) fullVocabList[idx] = wordObj;
+  // Cap interval at 365 days for mastered words (was 14 days max before)
+  interval = Math.min(interval, 365);
 
-  chrome.storage.local.set({ vocabList: fullVocabList }, () => {
+  const now = Date.now();
+  persistVocabularyWord(wordObj, {
+    repetition,
+    easeFactor,
+    interval,
+    nextReviewDate: now + interval * 24 * 60 * 60 * 1000
+  }).then(() => {
     updateBadge();
     renderVocabTable();
   });
@@ -1515,16 +1985,610 @@ function updateProgressRing(done, total) {
   if (pctEl) pctEl.textContent = `${pct}%`;
 }
 
-// ── Export ────────────────────────────────────────────────────
+// ── Import & Export ───────────────────────────────────────────
+
+function initImportExport() {
+  const exportDropdownBtn = document.getElementById('export-dropdown-btn');
+  const exportDropdownMenu = document.getElementById('export-dropdown-menu');
+  const exportJsonBtn = document.getElementById('export-json-btn');
+  const exportCsvBtn = document.getElementById('export-csv-btn');
+  const importBtn = document.getElementById('import-btn');
+  const importFileInput = document.getElementById('import-file-input');
+
+  if (exportDropdownBtn && exportDropdownMenu) {
+    exportDropdownBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportDropdownMenu.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', () => {
+      exportDropdownMenu.classList.add('hidden');
+    });
+  }
+
+  if (exportJsonBtn) {
+    exportJsonBtn.addEventListener('click', () => {
+      exportData();
+    });
+  }
+
+  if (exportCsvBtn) {
+    exportCsvBtn.addEventListener('click', () => {
+      exportCsvData();
+    });
+  }
+
+  if (importBtn && importFileInput) {
+    importBtn.addEventListener('click', () => {
+      importFileInput.click();
+    });
+
+    importFileInput.addEventListener('change', handleImportFileSelected);
+  }
+
+  const importCloseBtn = document.getElementById('import-modal-close');
+  const importCancelBtn = document.getElementById('import-cancel-btn');
+  const importBackdrop = document.getElementById('import-backdrop');
+  const importConfirmBtn = document.getElementById('import-confirm-btn');
+
+  [importCloseBtn, importCancelBtn, importBackdrop].forEach(el => {
+    if (el) el.addEventListener('click', closeImportModal);
+  });
+
+  if (importConfirmBtn) {
+    importConfirmBtn.addEventListener('click', confirmImport);
+  }
+}
 
 function exportData() {
   const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(fullVocabList, null, 2));
   const a = document.createElement('a');
   a.setAttribute('href', dataStr);
-  a.setAttribute('download', 'germanyvocab_vocab.json');
+  a.setAttribute('download', `germanyvocab_export_${new Date().toISOString().slice(0, 10)}.json`);
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+function exportCsvData() {
+  if (fullVocabList.length === 0) {
+    alert('No vocabulary words to export.');
+    return;
+  }
+
+  const headers = ['Word', 'Part of Speech', 'English Meaning', 'Vietnamese Translation', 'Context', 'Repetition', 'Ease Factor', 'Interval Days', 'Next Review Date', 'Date Added'];
+  const rows = fullVocabList.map(item => [
+    escapeCsvCell(item.word || ''),
+    escapeCsvCell(item.partOfSpeech || ''),
+    escapeCsvCell(item.englishMeaning || ''),
+    escapeCsvCell(item.translation || ''),
+    escapeCsvCell(item.context || ''),
+    item.repetition || 0,
+    (item.easeFactor || 2.5).toFixed(2),
+    (item.interval || 0).toFixed(1),
+    item.nextReviewDate ? new Date(item.nextReviewDate).toISOString() : '',
+    item.dateAdded ? new Date(item.dateAdded).toISOString() : ''
+  ]);
+
+  const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.setAttribute('href', url);
+  a.setAttribute('download', `germanyvocab_export_${new Date().toISOString().slice(0, 10)}.csv`);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function escapeCsvCell(str) {
+  const cell = String(str || '');
+  if (cell.includes(',') || cell.includes('"') || cell.includes('\n') || cell.includes('\r')) {
+    return `"${cell.replace(/"/g, '""')}"`;
+  }
+  return cell;
+}
+
+let pendingImportWords = [];
+
+function handleImportFileSelected(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    try {
+      const content = event.target.result;
+      if (file.name.endsWith('.json')) {
+        parseJsonImport(content);
+      } else if (file.name.endsWith('.csv')) {
+        parseCsvImport(content);
+      } else {
+        alert('Unsupported file format. Please choose a .json or .csv file.');
+      }
+    } catch (err) {
+      alert(`Could not parse file: ${err.message}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+
+function parseJsonImport(content) {
+  const data = JSON.parse(content);
+  const words = Array.isArray(data) ? data : (data.vocabList || []);
+  if (!Array.isArray(words) || words.length === 0) {
+    alert('No valid vocabulary array found in this JSON file.');
+    return;
+  }
+  openImportModal(words);
+}
+
+function parseCsvImport(content) {
+  const lines = content.split(/\r?\n/).filter(line => line.trim());
+  if (lines.length <= 1) {
+    alert('CSV file is empty or has only a header row.');
+    return;
+  }
+
+  const firstLine = lines[0].toLowerCase();
+  const hasHeader = firstLine.includes('word') || firstLine.includes('meaning') || firstLine.includes('translation');
+  const dataLines = hasHeader ? lines.slice(1) : lines;
+
+  const words = [];
+  dataLines.forEach(line => {
+    const cols = parseCsvLine(line);
+    if (!cols || !cols[0]) return;
+    words.push({
+      id: String(Date.now() + Math.random()),
+      word: cols[0].trim(),
+      partOfSpeech: cols[1]?.trim() || '',
+      englishMeaning: cols[2]?.trim() || cols[0].trim(),
+      translation: cols[3]?.trim() || cols[2]?.trim() || '',
+      context: cols[4]?.trim() || '',
+      repetition: Number(cols[5]) || 0,
+      easeFactor: Number(cols[6]) || 2.5,
+      interval: Number(cols[7]) || 0,
+      nextReviewDate: parseCsvDate(cols[8]),
+      dateAdded: parseCsvDate(cols[9])
+    });
+  });
+
+  if (words.length === 0) {
+    alert('No valid words could be read from this CSV file.');
+    return;
+  }
+  openImportModal(words);
+}
+
+// CSV export writes ISO dates. Blank or unreadable cells become undefined, so
+// import keeps the saved value (or uses its default) instead of resetting it.
+function parseCsvDate(value) {
+  const time = Date.parse(String(value || '').trim());
+  return Number.isNaN(time) ? undefined : time;
+}
+
+function parseCsvLine(text) {
+  const re = /(?:,|\n|^)("(?:(?:"")*[^"]*)*"|[^",\n]*|(?:\n|$))/g;
+  const row = [];
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    let val = match[1];
+    if (val === undefined) continue;
+    if (val.startsWith('"') && val.endsWith('"')) {
+      val = val.slice(1, -1).replace(/""/g, '"');
+    }
+    row.push(val);
+    if (match.index + match[0].length >= text.length) break;
+  }
+  return row;
+}
+
+function openImportModal(incomingWords) {
+  pendingImportWords = incomingWords.filter(w => w && (w.word || w.id));
+  const existingMap = new Map(fullVocabList.map(w => [String(w.word || '').toLowerCase(), w]));
+
+  let duplicateCount = 0;
+  let newCount = 0;
+  const previewList = document.getElementById('import-preview-list');
+  if (previewList) previewList.innerHTML = '';
+
+  pendingImportWords.forEach(w => {
+    const norm = String(w.word || '').toLowerCase();
+    const isDup = existingMap.has(norm);
+    if (isDup) duplicateCount++;
+    else newCount++;
+
+    if (previewList && previewList.children.length < 50) {
+      const item = document.createElement('div');
+      item.className = 'import-preview-item';
+      item.innerHTML = `<strong>${escapeHtml(w.word)}</strong> <span>${escapeHtml(w.translation || w.englishMeaning || '')} ${isDup ? '(existing)' : '(new)'}</span>`;
+      previewList.appendChild(item);
+    }
+  });
+
+  const summary = document.getElementById('import-summary-text');
+  if (summary) {
+    summary.textContent = `Found ${pendingImportWords.length} words (${newCount} new, ${duplicateCount} duplicates).`;
+  }
+
+  document.getElementById('import-modal')?.classList.remove('hidden');
+  document.getElementById('import-backdrop')?.classList.remove('hidden');
+}
+
+function closeImportModal() {
+  document.getElementById('import-modal')?.classList.add('hidden');
+  document.getElementById('import-backdrop')?.classList.add('hidden');
+  pendingImportWords = [];
+}
+
+function confirmImport() {
+  const mode = document.querySelector('input[name="import-mode"]:checked')?.value || 'merge';
+  const incomingWords = pendingImportWords;
+
+  let added = 0;
+  let updated = 0;
+
+  updateStoredVocabList(list => {
+    const existingMap = new Map(list.map(w => [String(w.word || '').toLowerCase(), w]));
+
+    incomingWords.forEach(w => {
+      const norm = String(w.word || '').toLowerCase();
+      if (existingMap.has(norm)) {
+        if (mode === 'overwrite') {
+          const existing = existingMap.get(norm);
+          // Keep the saved word's id (a CSV row gets a freshly generated one) and
+          // don't let cells the file left empty wipe saved values.
+          Object.entries(w).forEach(([key, value]) => {
+            if (key !== 'id' && value !== undefined) existing[key] = value;
+          });
+          updated++;
+        }
+      } else {
+        const newEntry = {
+          id: w.id || String(Date.now() + Math.random()),
+          word: String(w.word || '').trim(),
+          translation: w.translation || '',
+          englishMeaning: w.englishMeaning || w.word,
+          partOfSpeech: w.partOfSpeech || '',
+          context: w.context || '',
+          repetition: w.repetition || 0,
+          easeFactor: w.easeFactor || 2.5,
+          interval: w.interval || 0,
+          nextReviewDate: w.nextReviewDate || Date.now(),
+          dateAdded: w.dateAdded || Date.now()
+        };
+        list.push(newEntry);
+        existingMap.set(norm, newEntry);
+        added++;
+      }
+    });
+    return list;
+  }).then(() => {
+    closeImportModal();
+    loadData();
+    renderStatistics();
+    alert(`Import complete: ${added} words added, ${updated} words updated.`);
+  });
+}
+
+// ── Statistics Dashboard ──────────────────────────────────────
+
+function initStatisticsView() {
+  const refreshBtn = document.getElementById('refresh-stats-btn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', renderStatistics);
+  }
+}
+
+function recordReviewResult(isCorrect) {
+  addGamificationXP(isCorrect ? 15 : 5, isCorrect ? 'Correct recall' : 'Review practice');
+
+  chrome.storage.local.get({
+    reviewStreak: { currentStreak: 0, lastReviewDate: '', longestStreak: 0 },
+    reviewStats: { totalReviews: 0, correctReviews: 0, history: {} }
+  }, data => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const streak = data.reviewStreak || { currentStreak: 0, lastReviewDate: '', longestStreak: 0 };
+    const stats = data.reviewStats || { totalReviews: 0, correctReviews: 0, history: {} };
+
+    stats.totalReviews = (stats.totalReviews || 0) + 1;
+    if (isCorrect) {
+      stats.correctReviews = (stats.correctReviews || 0) + 1;
+    }
+    stats.history = stats.history || {};
+    stats.history[todayStr] = (stats.history[todayStr] || 0) + 1;
+
+    if (streak.lastReviewDate !== todayStr) {
+      if (!streak.lastReviewDate) {
+        streak.currentStreak = 1;
+      } else {
+        const last = new Date(streak.lastReviewDate);
+        const today = new Date(todayStr);
+        const diffDays = Math.round((today - last) / (1000 * 60 * 60 * 24));
+        if (diffDays === 1) {
+          streak.currentStreak = (streak.currentStreak || 0) + 1;
+        } else if (diffDays > 1) {
+          streak.currentStreak = 1;
+        }
+      }
+      streak.lastReviewDate = todayStr;
+      if (streak.currentStreak > (streak.longestStreak || 0)) {
+        streak.longestStreak = streak.currentStreak;
+      }
+    }
+
+    chrome.storage.local.set({ reviewStreak: streak, reviewStats: stats }, () => {
+      renderStatistics();
+    });
+  });
+}
+
+function renderStatistics() {
+  chrome.storage.local.get({
+    reviewStreak: { currentStreak: 0, lastReviewDate: '', longestStreak: 0 },
+    reviewStats: { totalReviews: 0, correctReviews: 0, history: {} }
+  }, data => {
+    const streak = data.reviewStreak || { currentStreak: 0, lastReviewDate: '', longestStreak: 0 };
+    const stats = data.reviewStats || { totalReviews: 0, correctReviews: 0, history: {} };
+
+    // 1. Streak
+    const streakEl = document.getElementById('stats-streak');
+    const streakHint = document.getElementById('stats-streak-hint');
+    if (streakEl) streakEl.textContent = streak.currentStreak || 0;
+    if (streakHint) {
+      streakHint.textContent = streak.longestStreak > 0
+        ? `Best streak: ${streak.longestStreak} days!`
+        : `Review words every day to build your streak!`;
+    }
+
+    // 2. Total Words & Due
+    const totalWords = fullVocabList.length;
+    const now = Date.now();
+    const dueWordsCount = fullVocabList.filter(item => !item.nextReviewDate || item.nextReviewDate <= now).length;
+    const totalWordsEl = document.getElementById('stats-total-words');
+    const dueWordsEl = document.getElementById('stats-due-words');
+    if (totalWordsEl) totalWordsEl.textContent = totalWords;
+    if (dueWordsEl) dueWordsEl.textContent = dueWordsCount;
+
+    // 3. Mastered Words (rep >= 4)
+    const masteredWordsCount = fullVocabList.filter(item => (item.repetition || 0) >= 4).length;
+    const masteryPct = totalWords > 0 ? Math.round((masteredWordsCount / totalWords) * 100) : 0;
+    const masteredWordsEl = document.getElementById('stats-mastered-words');
+    const masteryRateEl = document.getElementById('stats-mastery-rate');
+    if (masteredWordsEl) masteredWordsEl.textContent = masteredWordsCount;
+    if (masteryRateEl) masteryRateEl.textContent = `${masteryPct}%`;
+
+    // 4. Accuracy & Total Reviews
+    const totalReviews = stats.totalReviews || 0;
+    const correctReviews = stats.correctReviews || 0;
+    const accRate = totalReviews > 0 ? Math.round((correctReviews / totalReviews) * 100) : 100;
+    const accuracyEl = document.getElementById('stats-accuracy');
+    const totalReviewsEl = document.getElementById('stats-total-reviews');
+    if (accuracyEl) accuracyEl.textContent = `${accRate}%`;
+    if (totalReviewsEl) totalReviewsEl.textContent = totalReviews;
+
+    // 5. Mastery Distribution Bars
+    const buckets = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+    fullVocabList.forEach(w => {
+      const rep = w.repetition || 0;
+      if (rep === 0) buckets[0]++;
+      else if (rep === 1) buckets[1]++;
+      else if (rep === 2) buckets[2]++;
+      else if (rep === 3) buckets[3]++;
+      else buckets[4]++;
+    });
+
+    const setBar = (id, count, total) => {
+      const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+      const countEl = document.getElementById(`stats-count-${id}`);
+      const barEl = document.getElementById(`stats-bar-${id}`);
+      if (countEl) countEl.textContent = `${count} words (${pct}%)`;
+      if (barEl) barEl.style.width = `${pct}%`;
+    };
+
+    setBar('new', buckets[0], totalWords);
+    setBar('learning', buckets[1], totalWords);
+    setBar('familiar', buckets[2], totalWords);
+    setBar('known', buckets[3], totalWords);
+    setBar('mastered', buckets[4], totalWords);
+
+    // 6. 7-Day Activity Chart
+    const activityChart = document.getElementById('stats-activity-chart');
+    if (activityChart) {
+      activityChart.innerHTML = '';
+      const days = [];
+      const history = stats.history || {};
+
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toISOString().slice(0, 10);
+        const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
+        const count = history[dateStr] || 0;
+        days.push({ dayLabel, count });
+      }
+
+      const maxCount = Math.max(...days.map(d => d.count), 5);
+
+      days.forEach(d => {
+        const col = document.createElement('div');
+        col.className = 'activity-col';
+        const heightPct = Math.round((d.count / maxCount) * 100);
+        col.innerHTML = `
+          <span class="activity-count-label">${d.count}</span>
+          <div class="activity-bar-fill" style="height: ${Math.max(4, heightPct)}%"></div>
+          <span class="activity-day-label">${d.dayLabel}</span>
+        `;
+        activityChart.appendChild(col);
+      });
+    }
+
+    // 7. POS Breakdown
+    const posList = document.getElementById('stats-pos-list');
+    if (posList) {
+      posList.innerHTML = '';
+      const posCounts = {};
+      fullVocabList.forEach(w => {
+        const p = (w.partOfSpeech || 'other').toLowerCase();
+        posCounts[p] = (posCounts[p] || 0) + 1;
+      });
+
+      const sortedPos = Object.entries(posCounts).sort((a, b) => b[1] - a[1]);
+      if (sortedPos.length === 0) {
+        posList.innerHTML = '<span class="muted">No words categorized yet</span>';
+      } else {
+        sortedPos.slice(0, 6).forEach(([pos, count]) => {
+          const row = document.createElement('div');
+          row.className = 'pos-breakdown-row';
+          const pct = totalWords > 0 ? Math.round((count / totalWords) * 100) : 0;
+          row.innerHTML = `
+            <span class="pos-badge pos-${pos}">${pos}</span>
+            <span class="muted">${count} words (${pct}%)</span>
+          `;
+          posList.appendChild(row);
+        });
+      }
+    }
+
+    // 8. Gamification & Badges
+    renderGamification();
+  });
+}
+
+// ── Typing Quiz Question ──────────────────────────────────────
+
+let typingHintRevealed = false;
+
+function initTypingQuizListeners() {
+  const submitBtn = document.getElementById('qt-typing-submit');
+  const inputEl = document.getElementById('qt-typing-input');
+  const hintBtn = document.getElementById('qt-typing-hint-btn');
+  const listenBtn = document.getElementById('qt-typing-listen-btn');
+
+  if (submitBtn) submitBtn.addEventListener('click', handleTypingSubmit);
+  if (hintBtn) hintBtn.addEventListener('click', handleTypingHint);
+  if (inputEl) {
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleTypingSubmit();
+    });
+  }
+
+  if (listenBtn) {
+    listenBtn.addEventListener('click', () => {
+      if (currentWord && currentWord.word) {
+        speakReviewWord(currentWord.word, 'US');
+      }
+    });
+  }
+}
+
+function renderTypingQuestion() {
+  document.getElementById('qt-typing').classList.remove('hidden');
+  typingHintRevealed = false;
+
+  const meaningEl = document.getElementById('qt-typing-meaning');
+  const posEl = document.getElementById('qt-typing-pos');
+  const contextEl = document.getElementById('qt-typing-context');
+  const inputEl = document.getElementById('qt-typing-input');
+  const hintText = document.getElementById('qt-typing-hint-text');
+  const feedbackEl = document.getElementById('qt-typing-feedback');
+  const submitBtn = document.getElementById('qt-typing-submit');
+
+  if (meaningEl) meaningEl.textContent = currentWord.translation || currentWord.englishMeaning;
+  if (posEl) posEl.textContent = currentWord.partOfSpeech || 'word';
+
+  if (contextEl) {
+    if (currentWord.context) {
+      const reg = new RegExp(escapeRegExp(currentWord.word), 'gi');
+      contextEl.textContent = currentWord.context.replace(reg, '_______');
+    } else {
+      contextEl.textContent = '';
+    }
+  }
+
+  if (inputEl) {
+    inputEl.value = '';
+    inputEl.disabled = false;
+    setTimeout(() => inputEl.focus(), 100);
+  }
+
+  if (hintText) {
+    hintText.classList.add('hidden');
+    hintText.textContent = '';
+  }
+
+  if (feedbackEl) {
+    feedbackEl.classList.add('hidden');
+    feedbackEl.className = 'typing-feedback hidden';
+    feedbackEl.textContent = '';
+  }
+
+  if (submitBtn) submitBtn.disabled = false;
+}
+
+function handleTypingHint() {
+  if (!currentWord || !currentWord.word) return;
+  typingHintRevealed = true;
+  const word = currentWord.word.trim();
+  const hintText = document.getElementById('qt-typing-hint-text');
+  if (!hintText) return;
+
+  let hint = '';
+  if (word.length <= 2) {
+    hint = `${word[0]} _`;
+  } else {
+    hint = `${word[0]} ${'_ '.repeat(word.length - 2)}${word[word.length - 1]}`;
+  }
+  hintText.textContent = hint;
+  hintText.classList.remove('hidden');
+  document.getElementById('qt-typing-input')?.focus();
+}
+
+function handleTypingSubmit() {
+  const inputEl = document.getElementById('qt-typing-input');
+  const submitBtn = document.getElementById('qt-typing-submit');
+  const feedbackEl = document.getElementById('qt-typing-feedback');
+  if (!inputEl || !currentWord) return;
+
+  const typed = inputEl.value.trim().toLowerCase();
+  const target = String(currentWord.word || '').trim().toLowerCase();
+  const isCorrect = typed === target;
+
+  inputEl.disabled = true;
+  if (submitBtn) submitBtn.disabled = true;
+  playReviewAnswerSound(isCorrect);
+
+  if (feedbackEl) {
+    feedbackEl.classList.remove('hidden');
+    if (isCorrect) {
+      feedbackEl.className = 'typing-feedback correct';
+      feedbackEl.textContent = '✓ Correct! Excellent spelling!';
+    } else {
+      feedbackEl.className = 'typing-feedback wrong';
+      feedbackEl.textContent = `✗ Incorrect. The correct word is: "${currentWord.word}"`;
+    }
+  }
+
+  let quality = 0;
+  if (isCorrect) {
+    const elapsedSec = (Date.now() - (questionStartTime || Date.now())) / 1000;
+    if (!typingHintRevealed && elapsedSec < 4) quality = 5;
+    else if (!typingHintRevealed && elapsedSec < 8) quality = 4;
+    else quality = 3;
+  } else {
+    quality = 0;
+  }
+
+  updateSM2(currentWord, quality);
+  recordCurrentSessionOutcome(isCorrect);
+  recordReviewResult(isCorrect);
+
+  setTimeout(() => {
+    showSummaryPanel();
+  }, 1800);
 }
 
 // ── Utilities ─────────────────────────────────────────────────
@@ -1558,14 +2622,17 @@ async function startNativeLiveCoach() {
     const apiKey = (data.geminiApiKey || '').trim();
     if (!apiKey) throw new Error('Gemini API Key is missing. Please add it in the extension settings.');
 
-    liveCoachAudioContext = new (window.AudioContext || window.webkitAudioContext)({
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)({
       sampleRate: LIVE_COACH_INPUT_RATE
     });
-    await liveCoachAudioContext.resume();
-    liveCoachPlaybackTime = liveCoachAudioContext.currentTime;
+    liveCoachAudioContext = audioContext;
+    await audioContext.resume();
+    // Stop can be pressed while audio is starting or the mic prompt is open.
+    if (liveCoachAudioContext !== audioContext) return;
+    liveCoachPlaybackTime = audioContext.currentTime;
     pauseMusicForLiveCoach();
 
-    liveCoachStream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: { ideal: true },
         noiseSuppression: { ideal: true },
@@ -1574,35 +2641,46 @@ async function startNativeLiveCoach() {
         sampleRate: { ideal: LIVE_COACH_INPUT_RATE }
       }
     });
+    if (liveCoachAudioContext !== audioContext) {
+      stream.getTracks().forEach(track => track.stop());
+      return;
+    }
+    liveCoachStream = stream;
 
-    liveCoachSocket = new WebSocket(
+    const socket = new WebSocket(
       `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(apiKey)}`
     );
+    liveCoachSocket = socket;
 
-    liveCoachSocket.onopen = () => {
+    // Ignore events from a socket that has been stopped or replaced, so a late
+    // close from an old session can't shut down the current one.
+    socket.onopen = () => {
+      if (liveCoachSocket !== socket) return;
       liveCoachStarted = true;
       addCoachEvent('Connected to Gemini Live.');
       sendNativeLiveSetup();
     };
 
-    liveCoachSocket.onmessage = async event => {
+    socket.onmessage = async event => {
       try {
         const message = await parseNativeLiveMessage(event.data);
+        if (liveCoachSocket !== socket) return;
         handleNativeLiveMessage(message);
       } catch (error) {
         showCoachError(`Could not read Gemini Live message: ${error.message}`);
       }
     };
 
-    liveCoachSocket.onerror = () => {
+    socket.onerror = () => {
+      if (liveCoachSocket !== socket) return;
       showCoachError('Gemini Live WebSocket error. Check your API key and Live API access.');
       stopNativeLiveCoach();
     };
 
-    liveCoachSocket.onclose = event => {
+    socket.onclose = event => {
       const closeDetail = event.reason || `code ${event.code}`;
       addCoachEvent(`Live session closed: ${closeDetail}`);
-      stopNativeLiveCoach(false);
+      if (liveCoachSocket === socket) stopNativeLiveCoach(false);
     };
   } catch (error) {
     showCoachError(error.message);
@@ -1629,47 +2707,74 @@ function sendNativeLiveSetup() {
   liveCoachSocket.send(JSON.stringify(setup));
 }
 
-function startNativeLiveMicrophone() {
-  liveCoachSource = liveCoachAudioContext.createMediaStreamSource(liveCoachStream);
-  liveCoachProcessor = liveCoachAudioContext.createScriptProcessor(4096, 1, 1);
+function processLiveCoachAudioChunk(input) {
+  if (!liveCoachStarted || liveCoachSocket?.readyState !== WebSocket.OPEN) return;
+
+  // Calculate volume for UI animation
+  let sum = 0;
+  for (let i = 0; i < input.length; i++) {
+    sum += input[i] * input[i];
+  }
+  const rms = Math.sqrt(sum / input.length);
+  updateLiveCoachNoiseFloor(rms);
+  const threshold = Math.max(LIVE_COACH_MIN_RMS, liveCoachNoiseFloor * 2.6);
+  const volume = Math.min(1, Math.max(0, (rms - liveCoachNoiseFloor) * 14));
+  const pulseEl = document.getElementById('coach-pulse');
+  if (pulseEl && pulseEl.classList.contains('active')) {
+    // Use CSS variable to animate the orb based on mic input
+    pulseEl.style.setProperty('--mic-volume', volume.toFixed(3));
+  }
+
+  if (!shouldSendLiveCoachAudio(rms, threshold)) return;
+
+  const audioInput = resampleFloat32(input, liveCoachAudioContext.sampleRate, LIVE_COACH_INPUT_RATE);
+  const pcm16 = float32ToPcm16(audioInput);
+  const base64Audio = arrayBufferToBase64(pcm16.buffer);
+  liveCoachSocket.send(JSON.stringify({
+    realtimeInput: {
+      audio: {
+        data: base64Audio,
+        mimeType: `audio/pcm;rate=${LIVE_COACH_INPUT_RATE}`
+      }
+    }
+  }));
+}
+
+async function startNativeLiveMicrophone() {
+  const audioContext = liveCoachAudioContext;
+  liveCoachSource = audioContext.createMediaStreamSource(liveCoachStream);
   resetLiveCoachVoiceGate();
 
-  liveCoachProcessor.onaudioprocess = event => {
-    if (!liveCoachStarted || liveCoachSocket?.readyState !== WebSocket.OPEN) return;
-    const input = event.inputBuffer.getChannelData(0);
-
-    // Calculate volume for UI animation
-    let sum = 0;
-    for (let i = 0; i < input.length; i++) {
-      sum += input[i] * input[i];
-    }
-    const rms = Math.sqrt(sum / input.length);
-    updateLiveCoachNoiseFloor(rms);
-    const threshold = Math.max(LIVE_COACH_MIN_RMS, liveCoachNoiseFloor * 2.6);
-    const volume = Math.min(1, Math.max(0, (rms - liveCoachNoiseFloor) * 14));
-    const pulseEl = document.getElementById('coach-pulse');
-    if (pulseEl && pulseEl.classList.contains('active')) {
-      // Use CSS variable to animate the orb based on mic input
-      pulseEl.style.setProperty('--mic-volume', volume.toFixed(3));
-    }
-
-    if (!shouldSendLiveCoachAudio(rms, threshold)) return;
-
-    const audioInput = resampleFloat32(input, liveCoachAudioContext.sampleRate, LIVE_COACH_INPUT_RATE);
-    const pcm16 = float32ToPcm16(audioInput);
-    const base64Audio = arrayBufferToBase64(pcm16.buffer);
-    liveCoachSocket.send(JSON.stringify({
-      realtimeInput: {
-        audio: {
-          data: base64Audio,
-          mimeType: `audio/pcm;rate=${LIVE_COACH_INPUT_RATE}`
+  let useWorklet = false;
+  if (audioContext.audioWorklet) {
+    try {
+      await audioContext.audioWorklet.addModule('audio-recorder-worklet.js');
+      // The coach may have been stopped while the worklet was loading.
+      if (liveCoachAudioContext !== audioContext) return;
+      liveCoachProcessor = new AudioWorkletNode(audioContext, 'audio-recorder-processor');
+      liveCoachProcessor.port.onmessage = event => {
+        if (event.data?.audioData) {
+          processLiveCoachAudioChunk(event.data.audioData);
         }
-      }
-    }));
-  };
+      };
+      liveCoachSource.connect(liveCoachProcessor);
+      liveCoachProcessor.connect(liveCoachAudioContext.destination);
+      useWorklet = true;
+    } catch (err) {
+      console.warn('AudioWorklet failed, falling back to ScriptProcessor:', err);
+    }
+  }
 
-  liveCoachSource.connect(liveCoachProcessor);
-  liveCoachProcessor.connect(liveCoachAudioContext.destination);
+  if (liveCoachAudioContext !== audioContext) return;
+  if (!useWorklet) {
+    liveCoachProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+    liveCoachProcessor.onaudioprocess = event => {
+      processLiveCoachAudioChunk(event.inputBuffer.getChannelData(0));
+    };
+    liveCoachSource.connect(liveCoachProcessor);
+    liveCoachProcessor.connect(liveCoachAudioContext.destination);
+  }
+
   addCoachEvent('Microphone is streaming.');
 }
 
@@ -1729,9 +2834,15 @@ function handleNativeLiveMessage(message) {
   if (!serverContent) return;
 
   if (serverContent.interrupted) {
-    liveCoachPlaybackTime = liveCoachAudioContext.currentTime;
+    stopLiveCoachPlayback();
+    closeCoachTranscripts('ai');
     addCoachEvent('You interrupted Gemini.');
   }
+
+  const inputText = (serverContent.inputTranscription || serverContent.input_transcription)?.text;
+  if (inputText) appendCoachTranscript('user', inputText);
+  const outputText = (serverContent.outputTranscription || serverContent.output_transcription)?.text;
+  if (outputText) appendCoachTranscript('ai', outputText);
 
   const parts = serverContent.modelTurn?.parts || serverContent.model_turn?.parts || [];
   parts.forEach(part => {
@@ -1739,6 +2850,10 @@ function handleNativeLiveMessage(message) {
     const audioData = inlineData?.data;
     if (audioData) playNativeLiveAudio(audioData);
   });
+
+  if (serverContent.turnComplete || serverContent.turn_complete) {
+    closeCoachTranscripts();
+  }
 }
 
 async function parseNativeLiveMessage(data) {
@@ -1770,10 +2885,27 @@ function playNativeLiveAudio(base64Audio) {
   const source = liveCoachAudioContext.createBufferSource();
   source.buffer = audioBuffer;
   source.connect(liveCoachAudioContext.destination);
+  // Remember scheduled chunks so an interruption or Stop can silence them.
+  liveCoachPlaybackSources.add(source);
+  source.onended = () => liveCoachPlaybackSources.delete(source);
   const startAt = Math.max(liveCoachPlaybackTime, liveCoachAudioContext.currentTime);
   source.start(startAt);
   liveCoachPlaybackTime = startAt + audioBuffer.duration;
   liveCoachAiSpeakingUntil = Math.max(liveCoachAiSpeakingUntil, liveCoachPlaybackTime + LIVE_COACH_AI_DUCK_SECONDS);
+}
+
+function stopLiveCoachPlayback() {
+  liveCoachPlaybackSources.forEach(source => {
+    try {
+      source.stop();
+    } catch {
+      // Already finished.
+    }
+  });
+  liveCoachPlaybackSources.clear();
+  liveCoachPlaybackTime = liveCoachAudioContext?.currentTime || 0;
+  // The AI is silent now, so let the learner's voice through straight away.
+  liveCoachAiSpeakingUntil = 0;
 }
 
 function pauseMusicForLiveCoach() {
@@ -1786,7 +2918,7 @@ function pauseMusicForLiveCoach() {
   liveCoachPausedMusic = true;
   audio.pause();
   const icon = document.getElementById('music-icon');
-  if (icon) icon.textContent = 'â–¶';
+  if (icon) icon.textContent = '▶';
   document.getElementById('music-toggle')?.classList.remove('playing');
 }
 
@@ -1797,7 +2929,7 @@ function resumeMusicAfterLiveCoach() {
   liveCoachPausedMusic = false;
   audio.play().then(() => {
     const icon = document.getElementById('music-icon');
-    if (icon) icon.textContent = 'â¸';
+    if (icon) icon.textContent = '⏸';
     document.getElementById('music-toggle')?.classList.add('playing');
   }).catch(() => { });
 }
@@ -1805,6 +2937,7 @@ function resumeMusicAfterLiveCoach() {
 function stopNativeLiveCoach(closeSocket = true) {
   liveCoachStarted = false;
   liveCoachSetupComplete = false;
+  stopLiveCoachPlayback();
   resetLiveCoachVoiceGate();
   resumeMusicAfterLiveCoach();
   setNativeLiveButtons(false);
@@ -1812,6 +2945,9 @@ function stopNativeLiveCoach(closeSocket = true) {
 
   if (liveCoachProcessor) {
     liveCoachProcessor.disconnect();
+    if (liveCoachProcessor.port) {
+      liveCoachProcessor.port.onmessage = null;
+    }
     liveCoachProcessor.onaudioprocess = null;
     liveCoachProcessor = null;
   }
@@ -1827,6 +2963,11 @@ function stopNativeLiveCoach(closeSocket = true) {
     liveCoachSocket.close();
   }
   liveCoachSocket = null;
+  if (liveCoachAudioContext) {
+    // Every Start creates a new AudioContext; close this one so they don't pile up.
+    liveCoachAudioContext.close().catch(() => { });
+    liveCoachAudioContext = null;
+  }
 }
 
 function clearNativeLiveCoach() {
@@ -1916,6 +3057,36 @@ function appendCoachBubble(role, text, mergeWithPrevious = true) {
   log.scrollTop = log.scrollHeight;
 }
 
+// Live transcription arrives in small pieces that carry their own spacing.
+// Each piece is added to the speaker's open bubble until the turn ends.
+function appendCoachTranscript(role, chunk) {
+  const log = document.getElementById('coach-chat-log');
+  if (!log) return;
+
+  const lastMessage = log.lastElementChild;
+  const textEl = lastMessage?.querySelector('.coach-bubble p');
+  if (lastMessage?.dataset.role === role && lastMessage.dataset.transcript === 'open' && textEl) {
+    lastMessage.dataset.rawText += chunk;
+    textEl.textContent = lastMessage.dataset.rawText.trim();
+    log.scrollTop = log.scrollHeight;
+    return;
+  }
+
+  if (!chunk.trim()) return;
+  appendCoachBubble(role, chunk, false);
+  log.lastElementChild.dataset.transcript = 'open';
+  log.lastElementChild.dataset.rawText = chunk;
+}
+
+function closeCoachTranscripts(role) {
+  const selector = role
+    ? `#coach-chat-log [data-transcript="open"][data-role="${role}"]`
+    : '#coach-chat-log [data-transcript="open"]';
+  document.querySelectorAll(selector).forEach(message => {
+    message.dataset.transcript = 'closed';
+  });
+}
+
 function updateCoachClock() {
   const clockEl = document.getElementById('coach-clock');
   if (!clockEl) return;
@@ -1995,7 +3166,11 @@ function renderStoryWordList() {
 
     const span = document.createElement('span');
     span.className = 'story-word-label';
-    span.textContent = item.word;
+    const word = document.createElement('strong');
+    word.textContent = item.word;
+    const meaning = document.createElement('small');
+    meaning.textContent = item.translation || item.englishMeaning || 'No saved meaning';
+    span.append(word, meaning);
 
     wrapper.appendChild(cb);
     wrapper.appendChild(span);
@@ -2111,6 +3286,9 @@ function renderStoryPackage(storyData, selectedWords) {
 
   const contentEl = document.getElementById('story-content');
   contentEl.innerHTML = '';
+  storyStudy.selectedWords = selectedWords.map(word => String(word).toLowerCase());
+  storyStudy.exploredWords.clear();
+  storyStudy.fontScale = 1;
 
   const hero = document.createElement('div');
   hero.className = 'story-image-wrap';
@@ -2137,10 +3315,37 @@ function renderStoryPackage(storyData, selectedWords) {
   meta.textContent = [storyData?.level, storyData?.genre].filter(Boolean).join(' • ');
   contentEl.appendChild(meta);
 
+  const readingTools = document.createElement('div');
+  readingTools.className = 'story-reading-tools';
+  const progress = document.createElement('span');
+  progress.id = 'story-reading-progress';
+  progress.className = 'story-reading-progress';
+  readingTools.appendChild(progress);
+  const audioBtn = document.createElement('button');
+  audioBtn.type = 'button';
+  audioBtn.className = 'btn sm outline';
+  audioBtn.textContent = '🔊 Listen';
+  audioBtn.addEventListener('click', () => playStoryAudio(storyData?.story || ''));
+  const smallerBtn = document.createElement('button');
+  smallerBtn.type = 'button';
+  smallerBtn.className = 'story-text-control';
+  smallerBtn.textContent = 'A−';
+  smallerBtn.title = 'Decrease reading size';
+  const largerBtn = document.createElement('button');
+  largerBtn.type = 'button';
+  largerBtn.className = 'story-text-control';
+  largerBtn.textContent = 'A+';
+  largerBtn.title = 'Increase reading size';
+  readingTools.append(audioBtn, smallerBtn, largerBtn);
+  contentEl.appendChild(readingTools);
+
   const body = document.createElement('div');
   body.className = 'story-json-body';
   contentEl.appendChild(body);
   renderStoryWithHighlights(storyData?.story || '', selectedWords, body);
+  smallerBtn.addEventListener('click', () => setStoryFontScale(body, -0.1));
+  largerBtn.addEventListener('click', () => setStoryFontScale(body, 0.1));
+  updateStoryReadingProgress();
 
   const definitions = Array.isArray(storyData?.simpleDefinitions)
     ? storyData.simpleDefinitions
@@ -2149,15 +3354,22 @@ function renderStoryPackage(storyData, selectedWords) {
   if (definitions.length > 0) {
     const wordsBlock = document.createElement('div');
     wordsBlock.className = 'story-json-section';
-    wordsBlock.innerHTML = '<h5>Simple Definitions</h5>';
+    const heading = document.createElement('h5');
+    heading.textContent = 'Vocabulary lab — recall first, then reveal';
+    wordsBlock.appendChild(heading);
     definitions.forEach(item => {
-      const row = document.createElement('div');
-      row.className = 'story-json-row';
+      const row = document.createElement('details');
+      row.className = 'story-definition-card';
+      const summary = document.createElement('summary');
+      summary.textContent = typeof item === 'string' ? item.split(':')[0] : (item.word || 'Target word');
+      const definition = document.createElement('div');
+      definition.className = 'story-json-row';
       if (typeof item === 'string') {
-        row.textContent = item;
+        definition.textContent = item.includes(':') ? item.slice(item.indexOf(':') + 1).trim() : item;
       } else {
-        row.textContent = `${item.word || ''}: ${item.meaning || item.simpleMeaning || ''}${item.exampleSentence ? ' Example: ' + item.exampleSentence : ''}`;
+        definition.textContent = `${item.meaning || item.simpleMeaning || 'No definition returned.'}${item.exampleSentence ? ' Example: ' + item.exampleSentence : ''}`;
       }
+      row.append(summary, definition);
       wordsBlock.appendChild(row);
     });
     contentEl.appendChild(wordsBlock);
@@ -2170,15 +3382,58 @@ function renderStoryPackage(storyData, selectedWords) {
   if (questions.length > 0) {
     const questionBlock = document.createElement('div');
     questionBlock.className = 'story-json-section';
-    questionBlock.innerHTML = '<h5>Questions</h5>';
-    questions.slice(0, 3).forEach(item => {
-      const row = document.createElement('div');
-      row.className = 'story-json-row';
-      row.textContent = `${item.question || ''} Answer: ${item.answer || ''}`;
-      questionBlock.appendChild(row);
+    const heading = document.createElement('h5');
+    heading.textContent = 'Comprehension check';
+    questionBlock.appendChild(heading);
+    questions.slice(0, 3).forEach((item, index) => {
+      questionBlock.appendChild(createStoryQuestionCard(item, index));
     });
     contentEl.appendChild(questionBlock);
   }
+}
+
+function setStoryFontScale(body, change) {
+  storyStudy.fontScale = Math.min(1.35, Math.max(0.9, storyStudy.fontScale + change));
+  body.style.fontSize = `${storyStudy.fontScale}em`;
+}
+
+function playStoryAudio(storyText) {
+  const text = String(storyText || '').trim();
+  if (!text) return;
+  chrome.runtime.sendMessage({ action: 'speakText', text, lang: 'en-US' });
+}
+
+function updateStoryReadingProgress() {
+  const progress = document.getElementById('story-reading-progress');
+  if (!progress) return;
+  progress.textContent = `${storyStudy.exploredWords.size}/${storyStudy.selectedWords.length} target words explored`;
+}
+
+function createStoryQuestionCard(item, index) {
+  const card = document.createElement('article');
+  card.className = 'story-question-card';
+  const question = document.createElement('p');
+  question.className = 'story-question-text';
+  question.textContent = `${index + 1}. ${item.question || 'What happened in the story?'}`;
+  const input = document.createElement('textarea');
+  input.rows = 2;
+  input.placeholder = 'Answer from memory before revealing the model answer…';
+  const actions = document.createElement('div');
+  actions.className = 'story-question-actions';
+  const reveal = document.createElement('button');
+  reveal.type = 'button';
+  reveal.className = 'btn sm outline';
+  reveal.textContent = 'Reveal model answer';
+  const answer = document.createElement('div');
+  answer.className = 'story-model-answer hidden';
+  answer.textContent = item.answer || 'No model answer returned.';
+  reveal.addEventListener('click', () => {
+    answer.classList.toggle('hidden');
+    reveal.textContent = answer.classList.contains('hidden') ? 'Reveal model answer' : 'Hide model answer';
+  });
+  actions.appendChild(reveal);
+  card.append(question, input, actions, answer);
+  return card;
 }
 
 function updateBatchDeleteBtn() {
@@ -2199,8 +3454,7 @@ function deleteSelected() {
   if (ids.size === 0) return;
   const label = ids.size === 1 ? '1 word' : `${ids.size} words`;
   if (!confirm(`Delete ${label} from your vocabulary?`)) return;
-  fullVocabList = fullVocabList.filter(w => !ids.has(String(w.id)));
-  chrome.storage.local.set({ vocabList: fullVocabList }, () => { loadData(); });
+  updateStoredVocabList(list => list.filter(w => !ids.has(String(w.id)))).then(() => { loadData(); });
 }
 
 function renderStoryWithHighlights(storyText, selectedWords, targetEl = null) {
@@ -2236,6 +3490,12 @@ function initStoryTranslation() {
 
     const word = wordSpan.textContent.trim();
     if (!word) return;
+
+    if (wordSpan.classList.contains('story-vocab-highlight')) {
+      wordSpan.classList.add('explored');
+      storyStudy.exploredWords.add(word.toLowerCase());
+      updateStoryReadingProgress();
+    }
 
     const tooltip = document.createElement('div');
     tooltip.className = 'story-translate-tooltip';
@@ -2278,4 +3538,458 @@ function escapeHtml(str) {
 
 function escapeRegExp(str) {
   return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ── Backfill Missing Data ─────────────────────────────────────
+// Fetch part-of-speech for legacy words that were saved without it.
+
+function backfillPartOfSpeech() {
+  const wordsNeedingPos = fullVocabList.filter(item =>
+    item.word && !item.partOfSpeech
+  );
+  if (wordsNeedingPos.length === 0) return;
+
+  // Process in small batches to avoid overwhelming the API
+  const batch = wordsNeedingPos.slice(0, 5);
+  const foundPos = new Map();
+
+  Promise.allSettled(
+    batch.map(item =>
+      sendRuntimeMessage({ action: 'lookupDictionary', word: item.word })
+        .then(response => {
+          if (response?.success && response.partOfSpeech) {
+            item.partOfSpeech = response.partOfSpeech;
+            foundPos.set(String(item.id), response.partOfSpeech);
+          }
+        })
+    )
+  ).then(() => {
+    if (foundPos.size === 0) return;
+    updateStoredVocabList(list => {
+      list.forEach(w => {
+        if (foundPos.has(String(w.id)) && !w.partOfSpeech) w.partOfSpeech = foundPos.get(String(w.id));
+      });
+      return list;
+    });
+  });
+}
+
+// ── Word Groups & Tags System ─────────────────────────────────
+
+let currentTagWordId = null;
+let workingTags = [];
+
+function updateTagFilterDropdowns() {
+  const filterTagSelect = document.getElementById('filter-tag');
+  const gateTagSelect = document.getElementById('gate-tag-filter');
+  if (!filterTagSelect && !gateTagSelect) return;
+
+  const tagSet = new Set();
+  fullVocabList.forEach(w => {
+    if (Array.isArray(w.tags)) {
+      w.tags.forEach(t => {
+        const trimmed = String(t || '').trim();
+        if (trimmed) tagSet.add(trimmed);
+      });
+    }
+  });
+
+  const sortedTags = Array.from(tagSet).sort((a, b) => a.localeCompare(b));
+
+  if (filterTagSelect) {
+    const currentVal = filterTagSelect.value;
+    filterTagSelect.innerHTML = '<option value="all">All Tags</option>';
+    sortedTags.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = `#${t}`;
+      filterTagSelect.appendChild(opt);
+    });
+    if (sortedTags.includes(currentVal)) {
+      filterTagSelect.value = currentVal;
+    } else {
+      filterTagSelect.value = 'all';
+      vocabTagFilter = 'all';
+    }
+  }
+
+  if (gateTagSelect) {
+    const currentVal = gateTagSelect.value;
+    gateTagSelect.innerHTML = '<option value="all">All Tags (Entire Queue)</option>';
+    sortedTags.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = `#${t}`;
+      gateTagSelect.appendChild(opt);
+    });
+    if (sortedTags.includes(currentVal)) {
+      gateTagSelect.value = currentVal;
+    } else {
+      gateTagSelect.value = 'all';
+      reviewGateTagFilter = 'all';
+    }
+  }
+}
+
+function initTagsSystem() {
+  const modalClose = document.getElementById('tag-modal-close');
+  const modalCancel = document.getElementById('tag-modal-cancel');
+  const modalBackdrop = document.getElementById('tag-backdrop');
+  const modalSave = document.getElementById('tag-modal-save');
+  const addBtn = document.getElementById('add-tag-btn');
+  const tagInput = document.getElementById('new-tag-input');
+  const gateTagSelect = document.getElementById('gate-tag-filter');
+
+  [modalClose, modalCancel, modalBackdrop].forEach(el => {
+    if (el) el.addEventListener('click', closeTagModal);
+  });
+
+  if (modalSave) modalSave.addEventListener('click', saveWordTags);
+  if (addBtn) addBtn.addEventListener('click', addTagToCurrentWord);
+
+  if (tagInput) {
+    tagInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addTagToCurrentWord();
+      }
+    });
+  }
+
+  document.querySelectorAll('#suggested-chips .sug-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tag = btn.dataset.tag || btn.textContent.trim();
+      if (tag && !workingTags.includes(tag)) {
+        workingTags.push(tag);
+        renderWorkingTags();
+      }
+    });
+  });
+
+  if (gateTagSelect) {
+    gateTagSelect.addEventListener('change', () => {
+      reviewGateTagFilter = gateTagSelect.value;
+      prepareReviewSession();
+      renderReviewGate();
+    });
+  }
+}
+
+function openTagModal(wordId) {
+  const wordObj = fullVocabList.find(w => String(w.id) === String(wordId));
+  if (!wordObj) return;
+
+  currentTagWordId = wordId;
+  workingTags = Array.isArray(wordObj.tags) ? [...wordObj.tags] : [];
+
+  const wordTitle = document.getElementById('tag-modal-word-title');
+  if (wordTitle) wordTitle.textContent = `Tagging: "${wordObj.word}"`;
+
+  const tagInput = document.getElementById('new-tag-input');
+  if (tagInput) tagInput.value = '';
+
+  renderWorkingTags();
+
+  document.getElementById('tag-modal')?.classList.remove('hidden');
+  document.getElementById('tag-backdrop')?.classList.remove('hidden');
+
+  setTimeout(() => tagInput?.focus(), 100);
+}
+
+function closeTagModal() {
+  document.getElementById('tag-modal')?.classList.add('hidden');
+  document.getElementById('tag-backdrop')?.classList.add('hidden');
+  currentTagWordId = null;
+  workingTags = [];
+}
+
+function renderWorkingTags() {
+  const wrap = document.getElementById('current-tags-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+
+  if (workingTags.length === 0) {
+    wrap.innerHTML = '<span class="muted" style="font-size: 12px;">No tags yet. Add tags or click suggestions below.</span>';
+    return;
+  }
+
+  workingTags.forEach(tag => {
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip';
+    chip.innerHTML = `#${escapeHtml(tag)} <button type="button" class="tag-remove-btn" title="Remove tag" data-tag="${escapeHtml(tag)}">&times;</button>`;
+    wrap.appendChild(chip);
+  });
+
+  wrap.querySelectorAll('.tag-remove-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tagToRemove = btn.dataset.tag;
+      workingTags = workingTags.filter(t => t !== tagToRemove);
+      renderWorkingTags();
+    });
+  });
+}
+
+function addTagToCurrentWord() {
+  const input = document.getElementById('new-tag-input');
+  if (!input) return;
+  let tag = input.value.trim().replace(/^#+/, '');
+  if (!tag) return;
+
+  tag = tag.slice(0, 24).replace(/,/g, '');
+
+  if (!workingTags.includes(tag)) {
+    workingTags.push(tag);
+    renderWorkingTags();
+  }
+  input.value = '';
+}
+
+function saveWordTags() {
+  if (!currentTagWordId) return;
+  const wordObj = fullVocabList.find(w => String(w.id) === String(currentTagWordId));
+  if (wordObj) {
+    const hadTags = Array.isArray(wordObj.tags) && wordObj.tags.length > 0;
+    persistVocabularyWord(wordObj, { tags: [...workingTags] });
+
+    if (!hadTags && workingTags.length > 0) {
+      addGamificationXP(10, 'First time tagging a word');
+    }
+
+    renderVocabTable();
+    updateTagFilterDropdowns();
+  }
+  closeTagModal();
+}
+
+// ── Gamification & Badges System ──────────────────────────────
+
+const LEVEL_DEFINITIONS = [
+  { level: 1, title: 'Word Apprentice', minXp: 0, maxXp: 150 },
+  { level: 2, title: 'Vocabulary Explorer', minXp: 150, maxXp: 350 },
+  { level: 3, title: 'Memory Adept', minXp: 350, maxXp: 650 },
+  { level: 4, title: 'Linguistic Scholar', minXp: 650, maxXp: 1050 },
+  { level: 5, title: 'Polyglot Novice', minXp: 1050, maxXp: 1550 },
+  { level: 6, title: 'Polyglot Adept', minXp: 1550, maxXp: 2200 },
+  { level: 7, title: 'Fluency Master', minXp: 2200, maxXp: 3000 },
+  { level: 8, title: 'Lexicon Legend', minXp: 3000, maxXp: 4000 },
+  { level: 9, title: 'Grandmaster of Tongues', minXp: 4000, maxXp: 5500 },
+  { level: 10, title: 'Language Deity', minXp: 5500, maxXp: Infinity }
+];
+
+const BADGES_DEFINITIONS = [
+  {
+    id: 'first_word',
+    icon: '🌱',
+    title: 'First Step',
+    desc: 'Add your first vocabulary word',
+    check: (words, streak, stats) => words.length >= 1
+  },
+  {
+    id: 'vocab_10',
+    icon: '📚',
+    title: 'Word Collector',
+    desc: 'Collect 10 vocabulary words',
+    check: (words, streak, stats) => words.length >= 10
+  },
+  {
+    id: 'vocab_50',
+    icon: '📖',
+    title: 'Lexicon Builder',
+    desc: 'Collect 50 vocabulary words',
+    check: (words, streak, stats) => words.length >= 50
+  },
+  {
+    id: 'vocab_100',
+    icon: '🏛️',
+    title: 'Walking Dictionary',
+    desc: 'Collect 100 vocabulary words',
+    check: (words, streak, stats) => words.length >= 100
+  },
+  {
+    id: 'streak_3',
+    icon: '🔥',
+    title: 'Habit Builder',
+    desc: 'Maintain a 3-day review streak',
+    check: (words, streak, stats) => (streak.currentStreak >= 3 || streak.longestStreak >= 3)
+  },
+  {
+    id: 'streak_7',
+    icon: '⚡',
+    title: 'Unstoppable Flame',
+    desc: 'Reach a 7-day review streak',
+    check: (words, streak, stats) => (streak.currentStreak >= 7 || streak.longestStreak >= 7)
+  },
+  {
+    id: 'master_5',
+    icon: '⭐',
+    title: 'Word Master',
+    desc: 'Master 5 words (Repetition 4+)',
+    check: (words, streak, stats) => words.filter(w => (w.repetition || 0) >= 4).length >= 5
+  },
+  {
+    id: 'master_20',
+    icon: '👑',
+    title: 'Linguistic Royalty',
+    desc: 'Master 20 words (Repetition 4+)',
+    check: (words, streak, stats) => words.filter(w => (w.repetition || 0) >= 4).length >= 20
+  },
+  {
+    id: 'review_25',
+    icon: '🎯',
+    title: 'Dedicated Mind',
+    desc: 'Answer 25 review questions',
+    check: (words, streak, stats) => (stats.totalReviews || 0) >= 25
+  },
+  {
+    id: 'review_100',
+    icon: '🏆',
+    title: 'Century Reviewer',
+    desc: 'Answer 100 review questions',
+    check: (words, streak, stats) => (stats.totalReviews || 0) >= 100
+  },
+  {
+    id: 'tagger',
+    icon: '🏷️',
+    title: 'Curator',
+    desc: 'Tag vocabulary words into groups',
+    check: (words, streak, stats) => words.some(w => Array.isArray(w.tags) && w.tags.length > 0)
+  },
+  {
+    id: 'polyglot',
+    icon: '🚀',
+    title: 'High Climber',
+    desc: 'Advance to learning Level 3 or higher',
+    check: (words, streak, stats, gamer) => (gamer.level || 1) >= 3
+  }
+];
+
+function getLevelInfo(totalXp) {
+  const xp = Math.max(0, totalXp || 0);
+  let currentLevelObj = LEVEL_DEFINITIONS[0];
+
+  for (let i = LEVEL_DEFINITIONS.length - 1; i >= 0; i--) {
+    if (xp >= LEVEL_DEFINITIONS[i].minXp) {
+      currentLevelObj = LEVEL_DEFINITIONS[i];
+      break;
+    }
+  }
+
+  const level = currentLevelObj.level;
+  const title = currentLevelObj.title;
+  const isMax = currentLevelObj.maxXp === Infinity;
+  const minXp = currentLevelObj.minXp;
+  const maxXp = currentLevelObj.maxXp;
+  const progressInLevel = isMax ? 100 : (xp - minXp);
+  const span = isMax ? 100 : (maxXp - minXp);
+  const progressPct = isMax ? 100 : Math.min(100, Math.max(0, Math.round((progressInLevel / span) * 100)));
+
+  return {
+    level,
+    title,
+    xp,
+    minXp,
+    maxXp,
+    progressInLevel,
+    span,
+    progressPct,
+    nextLevel: isMax ? level : level + 1,
+    isMax
+  };
+}
+
+function addGamificationXP(amount, reason = '') {
+  chrome.storage.local.get({
+    userGamification: { xp: 0, level: 1, badges: [] }
+  }, data => {
+    const gamer = data.userGamification || { xp: 0, level: 1, badges: [] };
+    const oldXp = gamer.xp || 0;
+
+    const newXp = oldXp + amount;
+    const levelInfo = getLevelInfo(newXp);
+    gamer.xp = newXp;
+    gamer.level = levelInfo.level;
+    gamer.badges = gamer.badges || [];
+
+    chrome.storage.local.set({ userGamification: gamer }, () => {
+      const statsView = document.getElementById('stats-view');
+      if (statsView && statsView.classList.contains('active')) {
+        renderGamification();
+      }
+    });
+  });
+}
+
+function renderGamification() {
+  chrome.storage.local.get({
+    userGamification: { xp: 0, level: 1, badges: [] },
+    reviewStreak: { currentStreak: 0, lastReviewDate: '', longestStreak: 0 },
+    reviewStats: { totalReviews: 0, correctReviews: 0, history: {} }
+  }, data => {
+    const gamer = data.userGamification || { xp: 0, level: 1, badges: [] };
+    const streak = data.reviewStreak || { currentStreak: 0, lastReviewDate: '', longestStreak: 0 };
+    const stats = data.reviewStats || { totalReviews: 0, correctReviews: 0, history: {} };
+
+    const levelInfo = getLevelInfo(gamer.xp || 0);
+
+    const gamerTitle = document.getElementById('gamer-title');
+    const gamerLevelPill = document.getElementById('gamer-level-pill');
+    const gamerTotalXp = document.getElementById('gamer-total-xp');
+    const gamerNextLevel = document.getElementById('gamer-next-level');
+    const gamerXpProgressText = document.getElementById('gamer-xp-progress-text');
+    const gamerXpBar = document.getElementById('gamer-xp-bar');
+
+    if (gamerTitle) gamerTitle.textContent = levelInfo.title;
+    if (gamerLevelPill) gamerLevelPill.textContent = `Level ${levelInfo.level}`;
+    if (gamerTotalXp) gamerTotalXp.textContent = levelInfo.xp;
+
+    if (gamerNextLevel) {
+      gamerNextLevel.textContent = levelInfo.isMax ? 'Max Level' : `Level ${levelInfo.nextLevel}`;
+    }
+
+    if (gamerXpProgressText) {
+      if (levelInfo.isMax) {
+        gamerXpProgressText.textContent = `${levelInfo.xp} XP (Mastered)`;
+      } else {
+        gamerXpProgressText.textContent = `${levelInfo.progressInLevel} / ${levelInfo.span} XP`;
+      }
+    }
+
+    if (gamerXpBar) {
+      gamerXpBar.style.width = `${levelInfo.progressPct}%`;
+    }
+
+    const unlockedBadgesSet = new Set(gamer.badges || []);
+    let newlyUnlocked = false;
+
+    BADGES_DEFINITIONS.forEach(b => {
+      if (!unlockedBadgesSet.has(b.id)) {
+        if (b.check(fullVocabList, streak, stats, gamer)) {
+          unlockedBadgesSet.add(b.id);
+          newlyUnlocked = true;
+        }
+      }
+    });
+
+    if (newlyUnlocked) {
+      gamer.badges = Array.from(unlockedBadgesSet);
+      chrome.storage.local.set({ userGamification: gamer });
+    }
+
+    const badgesContainer = document.getElementById('badges-container');
+    if (badgesContainer) {
+      badgesContainer.innerHTML = '';
+      BADGES_DEFINITIONS.forEach(b => {
+        const isUnlocked = unlockedBadgesSet.has(b.id);
+        const card = document.createElement('div');
+        card.className = `badge-card ${isUnlocked ? 'unlocked' : 'locked'}`;
+        card.innerHTML = `
+          <div class="badge-icon">${isUnlocked ? b.icon : '🔒'}</div>
+          <div class="badge-title">${escapeHtml(b.title)}</div>
+          <div class="badge-desc">${escapeHtml(b.desc)}</div>
+          <span class="badge-status-tag">${isUnlocked ? 'Unlocked ✓' : 'Locked'}</span>
+        `;
+        badgesContainer.appendChild(card);
+      });
+    }
+  });
 }
