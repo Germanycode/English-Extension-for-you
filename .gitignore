@@ -26,3 +26,6 @@ build/
 
 # Local browser verification artifacts
 .playwright-cli/
+
+# Local agent instructions
+AGENT.md
